@@ -107,6 +107,7 @@ Param
     [switch]$usemsrdc ,
     [switch]$noFriendlyName ,
     [switch]$keepRdpFile ,
+    [switch]$darkModeEnabled ,
     [switch]$noResize , ## use mstsc with no width/height parameters
     [string]$widthHeight , ## colon delimited
     [string]$xy , ## colon delimited
@@ -157,6 +158,8 @@ $script:azureColumnFilters = @{}
 $script:azureColumnHeaders = @{}
 $script:azureSelectedSubscription = $null
 $script:azureLastGetAzVmCall = $null
+$script:darkModeRDs = [System.Collections.Generic.List[object]]::new()  # tracks merged ResourceDictionaries for removal
+$script:lightListViewItemStyle = $null  # saved light-mode ItemContainerStyle
 
 # keep user added comments so can set when displays change
 ##$script:itemscopy = New-Object -TypeName System.Collections.Generic.List[object]
@@ -226,6 +229,7 @@ drivestoredirect:s:$drivesToRedirect
                     <RadioButton x:Name="radioFillScreen" Grid.Column="4" Content="Fill Screen" HorizontalAlignment="Left" Height="24" Margin="145,348,0,0" VerticalAlignment="Top" Width="206" GroupName="WindowSize"/>
                     <CheckBox x:Name="chkboxRdpSigning" Grid.Column="4" Content="RDP File Signing" HorizontalAlignment="Left" Height="21" Margin="145,378,0,0" VerticalAlignment="Top" Width="160" ToolTip="Sign the RDP file before launching so mstsc/msrdc does not show an untrusted publisher warning"/>
                     <ComboBox x:Name="comboboxSigningCert" Grid.Column="4" HorizontalAlignment="Left" Height="25" Margin="314,375,0,0" VerticalAlignment="Top" Width="250" IsEnabled="False" ToolTip="Code signing certificate to use for RDP file signing"/>
+                    <CheckBox x:Name="chkDarkMode" Grid.Column="4" Content="_Dark Mode" HorizontalAlignment="Left" Height="21" Margin="145,165,0,0" VerticalAlignment="Top" Width="120"/>
 
                     <Grid Grid.ColumnSpan="5" VerticalAlignment="Bottom" Margin="5">
                         <Grid.ColumnDefinitions>
@@ -291,16 +295,19 @@ drivestoredirect:s:$drivesToRedirect
             </TabItem>
 
             <TabItem Header="Other Options">
-                <Grid x:Name="OtherRDPOptions" Margin="55,0,528,0"  HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="146*"/>
-                        <ColumnDefinition Width="33*"/>
-                    </Grid.ColumnDefinitions>
-                    <CheckBox x:Name="chkboxDoNotSave" Content="Do Not Save" Width="196" Grid.Column="1" Margin="46,133,-209,154"/>
-                    <CheckBox x:Name="chkboxDoNotApply" Content="Do Not Apply" Width="196" Grid.Column="1" Margin="46,106,-209,181"/>
-                    <Label Content="Other RDP File Options:" HorizontalAlignment="Center" Height="49" Margin="0,19,0,0" VerticalAlignment="Top" Width="144"/>
-                    <TextBox x:Name="txtBoxOtherOptions" HorizontalAlignment="Left" Margin="10,57,0,0" TextWrapping="Wrap" VerticalAlignment="Top" Height="230" Width="168" ForceCursor="True" IsManipulationEnabled="True" AcceptsReturn="True"  VerticalScrollBarVisibility="Visible" Grid.ColumnSpan="2"/>
-                    <Button x:Name="btnLaunchOtherOptions" Content="_Launch" HorizontalAlignment="Left" Height="25" VerticalAlignment="Bottom" Width="96" Margin="10,0,0,-19" IsDefault="True"/>
+                <Grid x:Name="OtherRDPOptions" Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Label Content="Other RDP File Options:" Grid.Row="0" HorizontalAlignment="Left" FontWeight="Bold" Margin="5,5,5,2"/>
+                    <TextBox x:Name="txtBoxOtherOptions" Grid.Row="1" Margin="5" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Visible" ForceCursor="True" IsManipulationEnabled="True"/>
+                    <CheckBox x:Name="chkboxDoNotApply" Content="Do Not Apply" Grid.Row="2" Margin="5,5,5,2"/>
+                    <CheckBox x:Name="chkboxDoNotSave" Content="Do Not Save" Grid.Row="3" Margin="5,2,5,5"/>
+                    <Button x:Name="btnLaunchOtherOptions" Content="_Launch" Grid.Row="4" HorizontalAlignment="Left" Height="25" Width="96" Margin="5" IsDefault="True"/>
                 </Grid>
             </TabItem>
 
@@ -476,7 +483,7 @@ drivestoredirect:s:$drivesToRedirect
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBox x:Name="textBoxAzureTenant" Grid.Row="0" TextWrapping="Wrap" VerticalAlignment="Top" IsReadOnly="True" Background="#F0F0F0" />
+                        <TextBox x:Name="textBoxAzureTenant" Grid.Row="0" TextWrapping="Wrap" VerticalAlignment="Top" IsReadOnly="True"/>
                         <CheckBox x:Name="checkBoxAzureAllVMs" Content="_All VMs" Grid.Row="1" Margin="0,6,0,0" VerticalAlignment="Top" />
                         <CheckBox x:Name="checkBoxAzureAVD" Content="_AVD" Grid.Row="2" Margin="0,4,0,0" VerticalAlignment="Top" />
                     </Grid>
@@ -506,7 +513,6 @@ drivestoredirect:s:$drivesToRedirect
                                                     BorderThickness="{TemplateBinding BorderThickness}"
                                                     Padding="2,2,2,2">
                                                 <GridViewRowPresenter Content="{TemplateBinding Content}"
-                                                                      Columns="{Binding Path=View.Columns, RelativeSource={RelativeSource AncestorType=ListView}}"
                                                                       VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                                             </Border>
                                         </ControlTemplate>
@@ -558,12 +564,14 @@ drivestoredirect:s:$drivesToRedirect
                                 <MenuItem Header="Config" x:Name="AzureConfigContextMenu">
                                     <MenuItem Header="Run" x:Name="AzureRunContextMenu" />
                                     <MenuItem Header="Detail" x:Name="AzureDetailContextMenu" />
+                                    <MenuItem Header="Cost" x:Name="AzureVMCostContextMenu" />
                                     <MenuItem Header="Open in Portal" x:Name="AzureOpenInPortalContextMenu" />
                                     <MenuItem Header="Extensions + Applications" x:Name="AzureExtensionsApplicationsContextMenu" />
                                     <MenuItem Header="Rename" x:Name="AzureRenameMenu" />
                                     <MenuItem Header="Reconfigure" x:Name="AzureReconfigureMenu" />
                                     <MenuItem Header="Change Disk Type" x:Name="AzureChangeDiskTypeContextMenu" />
                                     <MenuItem Header="Edit Tags" x:Name="AzureEditTagsContextMenu" />
+                                    <MenuItem Header="Roles / IAM" x:Name="AzureVMRolesContextMenu" />
                                     <MenuItem Header="Activity Logs" x:Name="AzureVMActivityLogsContextMenu" />
                                     <MenuItem Header="AVD Logs" x:Name="AzureAVDLogsContextMenu" IsEnabled="False" />
                                 </MenuItem>
@@ -585,24 +593,20 @@ drivestoredirect:s:$drivesToRedirect
                                 <MenuItem Header="Host Pool" x:Name="AzureHostPoolContextMenu" IsEnabled="False">
                                     <MenuItem Header="Detail" x:Name="AzureHostPoolDetailContextMenu" />
                                     <MenuItem Header="Open in Portal" x:Name="AzureHostPoolOpenInPortalContextMenu" />
-                                    <MenuItem Header="Acitivty (Log Analytics)" x:Name="AzureHostPoolLastLogonsContextMenu" />
+                                    <MenuItem Header="Activity (Log Analytics)" x:Name="AzureHostPoolLastLogonsContextMenu" />
                                     <MenuItem Header="Increase Size" x:Name="AzureChangeHostPoolSizeContextMenu" />
                                     <MenuItem Header="Activity Logs" x:Name="AzureHostPoolActivityLogsContextMenu" />
                                     <MenuItem Header="Application Groups" x:Name="AzureAppGroupsContextMenu" />
+                                    <MenuItem Header="SKU Check" x:Name="AzureHostPoolSKUCheckContextMenu" />
+                                    <MenuItem Header="Delete Host Pool" x:Name="AzureDeleteHostPoolContextMenu" />
                                 </MenuItem>
-                                <!-- 
                                 <MenuItem Header="Snapshots" x:Name="AzureSnapshotsContextMenu">
-                                    <MenuItem Header="Manage" x:Name="AzureManageSnapshotContextMenu" />
-                                    <MenuItem Header="Take Snapshot" x:Name="AzureTakeSnapshotContextMenu" />
-                                    <MenuItem Header="Revert to Latest Snapshot" x:Name="AzureRevertLatestSnapshotContextMenu" />
-                                    <MenuItem Header="Delete Latest Snapshot" x:Name="AzureDeleteLatestSnapshotContextMenu" />
+                                    <MenuItem Header="Create Snapshot" x:Name="AzureCreateSnapshotContextMenu" />
+                                    <MenuItem Header="List Snapshots" x:Name="AzureListSnapshotsContextMenu" />
                                 </MenuItem>
-                                <MenuItem Header="New" x:Name="AzureNewContextMenu">
-                                    <MenuItem Header="Brand New" x:Name="AzureNewVMContextMenu" />
-                                    <MenuItem Header="Templated" x:Name="AzureNewVMFromTemplateContextMenu" />
-                                </MenuItem>
-                                -->
                                 <MenuItem Header="Name to Clipboard" x:Name="AzureNameToClipboard" />
+
+<!--
                                 <MenuItem Header="NICS" x:Name="AzureNICSContextMenu">
                                     <MenuItem Header="Disconnect NIC" x:Name="AzureDisconnectNICContextMenu" />
                                     <MenuItem Header="Connect To" x:Name="AzureConnectNICContextMenu">
@@ -611,6 +615,7 @@ drivestoredirect:s:$drivesToRedirect
                                         <MenuItem Header="Private" x:Name="AzureConnectNICPrivateContextMenu" />
                                     </MenuItem>
                                 </MenuItem>
+-->
                             </ContextMenu>
                         </ListView.ContextMenu>
                     </ListView>
@@ -737,7 +742,7 @@ drivestoredirect:s:$drivesToRedirect
         <Label x:Name="lblComboHeader" Content="" Grid.Row="0" Margin="0,0,0,4" HorizontalAlignment="Stretch" FontWeight="Bold"/>
         <Label x:Name="lblComboCurrentValue" Content="" Grid.Row="1" Margin="0,0,0,8" HorizontalAlignment="Stretch"/>
         <Label x:Name="lblComboLabel" Content="New disk type:" Grid.Row="2" Margin="0,0,0,2" HorizontalAlignment="Stretch"/>
-        <ComboBox x:Name="comboBoxSelect" Grid.Row="3" Margin="0,0,0,0" HorizontalAlignment="Stretch" IsReadOnly="True"/>
+        <ComboBox x:Name="comboBoxSelect" Grid.Row="3" Margin="0,0,0,0" HorizontalAlignment="Stretch"/>
 
         <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button x:Name="btnComboOK" Content="OK" Height="32" MinWidth="90" Margin="0,0,8,0" IsDefault="True"/>
@@ -900,6 +905,7 @@ drivestoredirect:s:$drivesToRedirect
             <RadioButton x:Name="radHostPoolActLogsHours" Content="Hours" IsChecked="True" Margin="8,0,0,0" VerticalContentAlignment="Center"/>
             <RadioButton x:Name="radHostPoolActLogsDays" Content="Days" Margin="8,0,0,0" VerticalContentAlignment="Center"/>
             <Button x:Name="btnHostPoolActLogsRetrieve" Content="Retrieve" Width="80" Height="26" Margin="16,0,0,0"/>
+            <Label x:Name="lblHostPoolActLogsRetrievedAt" Content="" Margin="16,0,0,0" VerticalContentAlignment="Center" Foreground="Gray"/>
         </StackPanel>
         <Label x:Name="lblHostPoolActLogsStatus" Content="" Grid.Row="2" Foreground="Gray" Margin="0,0,0,4" Padding="0"/>
         <DataGrid x:Name="dgHostPoolActLogs" Grid.Row="3"
@@ -950,6 +956,7 @@ drivestoredirect:s:$drivesToRedirect
             <RadioButton x:Name="radVMActLogsHours" Content="Hours" IsChecked="True" Margin="8,0,0,0" VerticalContentAlignment="Center"/>
             <RadioButton x:Name="radVMActLogsDays" Content="Days" Margin="8,0,0,0" VerticalContentAlignment="Center"/>
             <Button x:Name="btnVMActLogsRetrieve" Content="Retrieve" Width="80" Height="26" Margin="16,0,0,0"/>
+            <Label x:Name="lblVMActLogsRetrievedAt" Content="" Margin="16,0,0,0" VerticalContentAlignment="Center" Foreground="Gray"/>
         </StackPanel>
         <Label x:Name="lblVMActLogsStatus" Content="" Grid.Row="2" Foreground="Gray" Margin="0,0,0,4" Padding="0"/>
         <DataGrid x:Name="dgVMActLogs" Grid.Row="3"
@@ -1000,6 +1007,7 @@ drivestoredirect:s:$drivesToRedirect
             <RadioButton x:Name="radAVDLogsHours" Content="Hours" IsChecked="True" Margin="8,0,0,0" VerticalContentAlignment="Center"/>
             <RadioButton x:Name="radAVDLogsDays" Content="Days" Margin="8,0,0,0" VerticalContentAlignment="Center"/>
             <Button x:Name="btnAVDLogsRetrieve" Content="Retrieve" Width="80" Height="26" Margin="16,0,0,0"/>
+            <Label x:Name="lblAVDLogsRetrievedAt" Content="" Margin="16,0,0,0" VerticalContentAlignment="Center" Foreground="Gray"/>
         </StackPanel>
         <Label x:Name="lblAVDLogsStatus" Content="" Grid.Row="2" Foreground="Gray" Margin="0,0,0,4" Padding="0"/>
         <DataGrid x:Name="dgAVDLogs" Grid.Row="3"
@@ -1042,6 +1050,7 @@ drivestoredirect:s:$drivesToRedirect
             <RadioButton x:Name="radHostPoolLastLogonsDays" Content="Days" IsChecked="True" Margin="8,0,0,0" VerticalContentAlignment="Center"/>
             <CheckBox x:Name="chkHostPoolLastLogonsOnly" Content="Last logon per user only" Margin="16,0,0,0" VerticalContentAlignment="Center"/>
             <Button x:Name="btnHostPoolLastLogonsRetrieve" Content="Retrieve" Width="80" Height="26" Margin="16,0,0,0"/>
+            <Label x:Name="lblHostPoolLastLogonsRetrievedAt" Content="" Margin="16,0,0,0" VerticalContentAlignment="Center" Foreground="Gray"/>
         </StackPanel>
         <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,4">
             <Label Content="Filter user:" VerticalContentAlignment="Center" Padding="0,0,6,0"/>
@@ -1158,6 +1167,93 @@ drivestoredirect:s:$drivesToRedirect
         <Button x:Name="btnSnapshotsCancel" Content="Cancel" HorizontalAlignment="Left" Margin="198,365,0,0" VerticalAlignment="Top" Width="75" IsCancel="True"/>
         <Label x:Name="lblLastRevert" Content="Last Revert" HorizontalAlignment="Left" Height="29" Margin="85,23,0,0" VerticalAlignment="Top" Width="622"/>
         <Button x:Name="btnDeleteSnapShotTree" Content="Delete _Tree" HorizontalAlignment="Left" Margin="593,300,0,0" VerticalAlignment="Top" Width="92"/>
+    </Grid>
+</Window>
+'@
+
+[string]$azureCreateSnapshotXAML = @'
+<Window x:Class="WPF_Scratchpad.Window1"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:WPF_Scratchpad"
+        mc:Ignorable="d"
+        Title="Create Snapshot" Height="440" Width="560" MinHeight="360" MinWidth="460">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Label x:Name="lblSnapshotCreateInfo" Content="Snapshot name:" Grid.Row="0" Padding="0,0,0,2"/>
+        <TextBox x:Name="txtSnapshotCreateName" Grid.Row="1" Margin="0,0,0,10" Height="26"/>
+        <Label Content="Tags (optional):" Grid.Row="2" Padding="0,0,0,2"/>
+        <ListView x:Name="listViewSnapshotTags" Grid.Row="3" Margin="0,0,0,4" MinHeight="60">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Key" DisplayMemberBinding="{Binding Key}" Width="200"/>
+                    <GridViewColumn Header="Value" DisplayMemberBinding="{Binding Value}" Width="220"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+        <Grid Grid.Row="4" Margin="0,4,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="60"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="70"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="txtTagKey" Grid.Column="0" Height="26" ToolTip="Tag key"/>
+            <TextBox x:Name="txtTagValue" Grid.Column="2" Height="26" ToolTip="Tag value"/>
+            <Button x:Name="btnAddTag" Content="Add" Grid.Column="4" Height="26"/>
+            <Button x:Name="btnRemoveTag" Content="Remove" Grid.Column="6" Height="26" IsEnabled="False"/>
+        </Grid>
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnSnapshotCreateOk" Content="Create" Height="32" MinWidth="90" Margin="0,0,8,0" IsDefault="True"/>
+            <Button x:Name="btnSnapshotCreateCancel" Content="Cancel" Height="32" MinWidth="90" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
+'@
+
+[string]$azureSnapshotListXAML = @'
+<Window x:Class="WPF_Scratchpad.Window1"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:WPF_Scratchpad"
+        mc:Ignorable="d"
+        Title="Azure Snapshots" Height="460" Width="720" MinHeight="300" MinWidth="500">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Label x:Name="lblSnapshotHeader" Content="Snapshots:" Grid.Row="0" FontWeight="Bold" Margin="0,0,0,6"/>
+        <ListView x:Name="listViewAzureSnapshots" Grid.Row="1" Margin="0,0,0,8">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="280"/>
+                    <GridViewColumn Header="Time Created" DisplayMemberBinding="{Binding TimeCreated}" Width="180"/>
+                    <GridViewColumn Header="Size (GB)" DisplayMemberBinding="{Binding DiskSizeGB}" Width="80"/>
+                    <GridViewColumn Header="Source Disk" DisplayMemberBinding="{Binding SourceDisk}" Width="150"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnSnapshotDelete" Content="Delete Selected" Height="32" MinWidth="140" Margin="0,0,8,0" IsEnabled="False"/>
+            <Button x:Name="btnSnapshotRevert" Content="Revert to Selected" Height="32" MinWidth="140" Margin="0,0,8,0" IsEnabled="False"/>
+            <Button x:Name="btnSnapshotClose" Content="Close" Height="32" MinWidth="90" IsCancel="True"/>
+        </StackPanel>
     </Grid>
 </Window>
 '@
@@ -2606,6 +2702,514 @@ Function New-RemoteSession
 }
  
 
+Function Apply-DarkMode
+{
+    param( [System.Windows.Window]$window )
+    if( $null -eq $window ) { return }
+
+    [string]$rdXaml = @'
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}"          Color="#1E1E1E"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}"       Color="#E0E0E0"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}"          Color="#2D2D2D"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}"      Color="#E0E0E0"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlLightBrushKey}"     Color="#3C3C3C"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlLightLightBrushKey}" Color="#4A4A4A"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlDarkBrushKey}"      Color="#555555"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlDarkDarkBrushKey}"  Color="#3C3C3C"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.GrayTextBrushKey}"         Color="#808080"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.MenuBrushKey}"             Color="#252526"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.MenuTextBrushKey}"         Color="#E0E0E0"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.MenuBarBrushKey}"          Color="#252526"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}"                      Color="#0063B1"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}"                  Color="White"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}"     Color="#4D90C8"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="White"/>
+    <Style TargetType="Window">
+        <Setter Property="Background" Value="#1E1E1E"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+    </Style>
+    <Style TargetType="Label">
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <Style TargetType="TextBox">
+        <Setter Property="Background"          Value="#3C3C3C"/>
+        <Setter Property="Foreground"          Value="#E0E0E0"/>
+        <Setter Property="BorderBrush"         Value="#555555"/>
+        <Setter Property="BorderThickness"     Value="1"/>
+        <Setter Property="CaretBrush"          Value="#E0E0E0"/>
+        <Setter Property="SelectionBrush"      Value="#0063B1"/>
+        <Setter Property="Padding"             Value="2,1,2,1"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="border"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Focusable="False"
+                                      Background="Transparent"
+                                      HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                                      VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}"
+                                      Padding="{TemplateBinding Padding}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsReadOnly" Value="True">
+                            <Setter TargetName="border" Property="Background" Value="#2A2A2A"/>
+                            <Setter Property="Foreground" Value="#B0B0B0"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="border" Property="Background"  Value="#2D2D2D"/>
+                            <Setter Property="Foreground" Value="#666666"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="border" Property="BorderBrush" Value="#888888"/>
+                        </Trigger>
+                        <Trigger Property="IsFocused" Value="True">
+                            <Setter TargetName="border" Property="BorderBrush" Value="#0078D4"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="Button">
+        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="ToggleButton">
+        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="CheckBox">
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="BorderBrush" Value="#999999"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <BulletDecorator Background="Transparent">
+                        <BulletDecorator.Bullet>
+                            <Border x:Name="CheckBoxBorder"
+                                    Width="14" Height="14"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="1">
+                                <Path x:Name="CheckMark"
+                                      Visibility="Collapsed"
+                                      SnapsToDevicePixels="False"
+                                      Stroke="#E0E0E0"
+                                      StrokeThickness="2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      Data="M 1.5 5.5 L 4.5 8.5 L 9 2"/>
+                                </Border>
+                        </BulletDecorator.Bullet>
+                        <ContentPresenter Margin="5,0,0,0"
+                                          VerticalAlignment="Center"
+                                          RecognizesAccessKey="True"/>
+                    </BulletDecorator>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="{x:Null}">
+                            <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="CheckMark" Property="Stroke" Value="#808080"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#CCCCCC"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="#606060"/>
+                            <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#555555"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="RadioButton">
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="BorderBrush" Value="#999999"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <BulletDecorator Background="Transparent">
+                        <BulletDecorator.Bullet>
+                            <Border x:Name="RadioBorder"
+                                    Width="14" Height="14"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="7">
+                                <Ellipse x:Name="RadioMark"
+                                         Width="6" Height="6"
+                                         Fill="#E0E0E0"
+                                         Visibility="Collapsed"/>
+                            </Border>
+                        </BulletDecorator.Bullet>
+                        <ContentPresenter Margin="5,0,0,0"
+                                          VerticalAlignment="Center"
+                                          RecognizesAccessKey="True"/>
+                    </BulletDecorator>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="RadioMark" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="RadioBorder" Property="BorderBrush" Value="#CCCCCC"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="#606060"/>
+                            <Setter TargetName="RadioBorder" Property="BorderBrush" Value="#555555"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ComboBox">
+        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="Padding"    Value="4,2,4,2"/>
+        <Style.Triggers>
+            <Trigger Property="IsHighlighted" Value="True">
+                <Setter Property="Background" Value="#0063B1"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="#0063B1"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="#666666"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style TargetType="ListBox">
+        <Setter Property="Background" Value="#2D2D2D"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="ListView">
+        <Setter Property="Background" Value="#2D2D2D"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="ListViewItem">
+        <Setter Property="Background" Value="#2D2D2D"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#3A6EA0"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="#0063B1"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style TargetType="GridViewColumnHeader">
+        <Setter Property="Background" Value="#252526"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#3C3C3C"/>
+    </Style>
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="#2D2D2D"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+        <Setter Property="RowBackground" Value="#2D2D2D"/>
+        <Setter Property="AlternatingRowBackground" Value="#252526"/>
+        <Setter Property="HorizontalGridLinesBrush" Value="#3C3C3C"/>
+        <Setter Property="VerticalGridLinesBrush" Value="#3C3C3C"/>
+    </Style>
+    <Style TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="#252526"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#3C3C3C"/>
+        <Setter Property="SeparatorBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="DataGridRow">
+        <Setter Property="Background" Value="#2D2D2D"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+    </Style>
+    <Style TargetType="DataGridCell">
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+    </Style>
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="#1E1E1E"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="TabItem">
+        <Setter Property="Background"  Value="#2D2D2D"/>
+        <Setter Property="Foreground"  Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+        <Setter Property="Padding"     Value="10,4,10,4"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="TabBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="1,1,1,0"
+                            Padding="{TemplateBinding Padding}"
+                            Margin="0,0,2,0"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter x:Name="HeaderContent"
+                                          ContentSource="Header"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          TextBlock.Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="TabBorder"     Property="Background"              Value="#3C3C3C"/>
+                            <Setter TargetName="TabBorder"     Property="BorderThickness"          Value="1,1,1,0"/>
+                            <Setter TargetName="HeaderContent" Property="TextBlock.Foreground"     Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="TabBorder"     Property="Background"              Value="#3A3A3A"/>
+                            <Setter TargetName="HeaderContent" Property="TextBlock.Foreground"     Value="White"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="HeaderContent" Property="TextBlock.Foreground"     Value="#666666"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="GroupBox">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="ContextMenu">
+        <Setter Property="Background" Value="#252526"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="MenuItem">
+        <Setter Property="Background" Value="#252526"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Style.Triggers>
+            <Trigger Property="IsHighlighted" Value="True">
+                <Setter Property="Background" Value="#0063B1"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="#666666"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+    <Style TargetType="Separator">
+        <Setter Property="Background" Value="#555555"/>
+    </Style>
+    <Style TargetType="ToolTip">
+        <Setter Property="Background" Value="#252526"/>
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="ProgressBar">
+        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="Foreground" Value="#0078D4"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+    <Style TargetType="ScrollBar">
+        <Setter Property="Background" Value="#2D2D2D"/>
+    </Style>
+    <Style TargetType="Expander">
+        <Setter Property="Foreground" Value="#E0E0E0"/>
+        <Setter Property="BorderBrush" Value="#555555"/>
+    </Style>
+</ResourceDictionary>
+'@
+
+    $rd = $null
+    try
+    {
+        $reader = [System.Xml.XmlNodeReader]::new( [xml]$rdXaml )
+        $rd = [System.Windows.Markup.XamlReader]::Load( $reader )
+        $window.Resources.MergedDictionaries.Add( $rd )
+        $script:darkModeRDs.Add( [pscustomobject]@{ Window = $window ; RD = $rd } )
+    }
+    catch
+    {
+        Write-Warning "Apply-DarkMode: ResourceDictionary error: $($_.Exception.Message)"
+    }
+
+    # ListView ItemContainerStyle uses an explicit style so implicit styles won't override it - replace it directly
+    if( $null -ne $WPFlistViewAzureVMs -and $window -eq $mainWindow )
+    {
+        $WPFlistViewAzureVMs.Background = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x2D, 0x2D, 0x2D ) )
+        $WPFlistViewAzureVMs.Foreground = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0xE0, 0xE0, 0xE0 ) )
+        if( $null -eq $script:lightListViewItemStyle )
+        {
+            $script:lightListViewItemStyle = $WPFlistViewAzureVMs.ItemContainerStyle
+        }
+        # Build dark ItemContainerStyle programmatically to avoid any XAML parsing issues
+        try
+        {
+            $darkBg          = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x2D, 0x2D, 0x2D ) )
+            $darkAltBg       = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x25, 0x25, 0x26 ) )
+            $darkFg          = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0xE0, 0xE0, 0xE0 ) )
+            $hoverBg         = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x3A, 0x6E, 0xA0 ) )
+            $selectedBg      = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x00, 0x63, 0xB1 ) )
+            $selectedInactBg = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x4D, 0x90, 0xC8 ) )
+            $whiteBrush      = [System.Windows.Media.Brushes]::White
+
+            # ControlTemplate using FrameworkElementFactory (Border -> GridViewRowPresenter)
+            $borderFac = [System.Windows.FrameworkElementFactory]::new( [System.Windows.Controls.Border] )
+            $bnd = [System.Windows.Data.Binding]::new( 'Background' )
+            $bnd.RelativeSource = [System.Windows.Data.RelativeSource]::TemplatedParent
+            $borderFac.SetBinding( [System.Windows.Controls.Border]::BackgroundProperty, $bnd )
+            $bnd2 = [System.Windows.Data.Binding]::new( 'BorderBrush' )
+            $bnd2.RelativeSource = [System.Windows.Data.RelativeSource]::TemplatedParent
+            $borderFac.SetBinding( [System.Windows.Controls.Border]::BorderBrushProperty, $bnd2 )
+            $bnd3 = [System.Windows.Data.Binding]::new( 'BorderThickness' )
+            $bnd3.RelativeSource = [System.Windows.Data.RelativeSource]::TemplatedParent
+            $borderFac.SetBinding( [System.Windows.Controls.Border]::BorderThicknessProperty, $bnd3 )
+            $borderFac.SetValue( [System.Windows.Controls.Border]::PaddingProperty, [System.Windows.Thickness]::new( 2, 2, 2, 2 ) )
+
+            $gvrpFac = [System.Windows.FrameworkElementFactory]::new( [System.Windows.Controls.GridViewRowPresenter] )
+            $bnd4 = [System.Windows.Data.Binding]::new( 'Content' )
+            $bnd4.RelativeSource = [System.Windows.Data.RelativeSource]::TemplatedParent
+            $gvrpFac.SetBinding( [System.Windows.Controls.GridViewRowPresenter]::ContentProperty, $bnd4 )
+            $bnd5 = [System.Windows.Data.Binding]::new( 'VerticalContentAlignment' )
+            $bnd5.RelativeSource = [System.Windows.Data.RelativeSource]::TemplatedParent
+            $gvrpFac.SetBinding( [System.Windows.FrameworkElement]::VerticalAlignmentProperty, $bnd5 )
+            $borderFac.AppendChild( $gvrpFac )
+
+            $darkTemplate = [System.Windows.Controls.ControlTemplate]::new( [System.Windows.Controls.ListViewItem] )
+            $darkTemplate.VisualTree = $borderFac
+
+            # Assemble Style with setters and triggers
+            $darkItemStyle = [System.Windows.Style]::new( [System.Windows.Controls.ListViewItem] )
+            $darkItemStyle.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::BackgroundProperty, $darkBg ) )
+            $darkItemStyle.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::ForegroundProperty, $darkFg ) )
+            $darkItemStyle.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::TemplateProperty, $darkTemplate ) )
+
+            $t1 = [System.Windows.Trigger]::new()
+            $t1.Property = [System.Windows.Controls.ItemsControl]::AlternationIndexProperty
+            $t1.Value    = [int]1
+            $t1.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::BackgroundProperty, $darkAltBg ) )
+            $darkItemStyle.Triggers.Add( $t1 )
+
+            $t2 = [System.Windows.Trigger]::new()
+            $t2.Property = [System.Windows.UIElement]::IsMouseOverProperty
+            $t2.Value    = $true
+            $t2.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::BackgroundProperty, $hoverBg ) )
+            $darkItemStyle.Triggers.Add( $t2 )
+
+            $t3 = [System.Windows.Trigger]::new()
+            $t3.Property = [System.Windows.Controls.Primitives.Selector]::IsSelectedProperty
+            $t3.Value    = $true
+            $t3.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::BackgroundProperty, $selectedBg ) )
+            $t3.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::ForegroundProperty, $whiteBrush ) )
+            $darkItemStyle.Triggers.Add( $t3 )
+
+            $mt = [System.Windows.MultiTrigger]::new()
+            $mt.Conditions.Add( [System.Windows.Condition]::new( [System.Windows.Controls.Primitives.Selector]::IsSelectedProperty,      $true  ) )
+            $mt.Conditions.Add( [System.Windows.Condition]::new( [System.Windows.Controls.Primitives.Selector]::IsSelectionActiveProperty, $false ) )
+            $mt.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::BackgroundProperty, $selectedInactBg ) )
+            $mt.Setters.Add( [System.Windows.Setter]::new( [System.Windows.Controls.Control]::ForegroundProperty, $whiteBrush ) )
+            $darkItemStyle.Triggers.Add( $mt )
+
+            $WPFlistViewAzureVMs.ItemContainerStyle = $darkItemStyle
+        }
+        catch { Write-Warning "Apply-DarkMode: ListView style error: $($_.Exception.Message)" }
+    }
+
+    # Walk logical tree and override hardcoded AlternatingRowBackground on DataGrids
+    # and fix editable ComboBox inner TextBox which ignores implicit styles
+    # (local XAML values beat implicit style setters, so must be set explicitly)
+    $darkBg3C   = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x3C, 0x3C, 0x3C ) )
+    $lightFgE0  = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0xE0, 0xE0, 0xE0 ) )
+    $selBlue    = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x00, 0x63, 0xB1 ) )
+    $queue = [System.Collections.Generic.Queue[object]]::new()
+    $queue.Enqueue( $window )
+    while( $queue.Count -gt 0 )
+    {
+        $node = $queue.Dequeue()
+        if( $node -is [System.Windows.Controls.DataGrid] )
+        {
+            $node.RowBackground            = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x2D, 0x2D, 0x2D ) )
+            $node.AlternatingRowBackground = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x25, 0x25, 0x26 ) )
+        }
+        if( $node -is [System.Windows.Controls.ComboBox] -and $node.IsEditable )
+        {
+            try
+            {
+                $innerTB = $node.Template.FindName( 'PART_EditableTextBox' , $node )
+                if( $null -ne $innerTB )
+                {
+                    $innerTB.Background     = $darkBg3C
+                    $innerTB.Foreground     = $lightFgE0
+                    $innerTB.CaretBrush     = $lightFgE0
+                    $innerTB.SelectionBrush = $selBlue
+                }
+            }
+            catch {}
+        }
+        foreach( $child in [System.Windows.LogicalTreeHelper]::GetChildren( $node ) )
+        {
+            if( $child -is [System.Windows.DependencyObject] ) { $queue.Enqueue( $child ) }
+        }
+    }
+}
+
+Function Remove-DarkMode
+{
+    param( [System.Windows.Window]$window )
+    if( $null -eq $window ) { return }
+
+    $entry = $script:darkModeRDs | Where-Object { $_.Window -eq $window } | Select-Object -Last 1
+    if( $null -ne $entry )
+    {
+        [void]$window.Resources.MergedDictionaries.Remove( $entry.RD )
+        [void]$script:darkModeRDs.Remove( $entry )
+    }
+
+    if( $null -ne $WPFlistViewAzureVMs -and $window -eq $mainWindow )
+    {
+        $WPFlistViewAzureVMs.Background = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0xFF, 0xFF, 0xFF ) )
+        $WPFlistViewAzureVMs.Foreground = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0x00, 0x00, 0x00 ) )
+        $WPFlistViewAzureVMs.ItemContainerStyle = $script:lightListViewItemStyle
+        $script:lightListViewItemStyle = $null  # reset so Apply-DarkMode can re-save on next toggle
+    }
+
+    # Restore hardcoded AlternatingRowBackground on DataGrids
+    $queue = [System.Collections.Generic.Queue[object]]::new()
+    $queue.Enqueue( $window )
+    while( $queue.Count -gt 0 )
+    {
+        $node = $queue.Dequeue()
+        if( $node -is [System.Windows.Controls.DataGrid] )
+        {
+            $node.ClearValue( [System.Windows.Controls.DataGrid]::RowBackgroundProperty )
+            $node.AlternatingRowBackground = [System.Windows.Media.SolidColorBrush]::new( [System.Windows.Media.Color]::FromRgb( 0xF5, 0xF5, 0xF5 ) )
+        }
+        foreach( $child in [System.Windows.LogicalTreeHelper]::GetChildren( $node ) )
+        {
+            if( $child -is [System.Windows.DependencyObject] ) { $queue.Enqueue( $child ) }
+        }
+    }
+}
+
 Function New-WPFWindow( $inputXAML )
 {
     $form = $NULL
@@ -2621,6 +3225,11 @@ Function New-WPFWindow( $inputXAML )
                 {
                     Set-Variable -Name "WPF$($_.Name)" -Value $Form.FindName( $_.Name ) -Scope Script
                 }}
+
+                if( $script:darkModeEnabled )
+                {
+                    Apply-DarkMode -window $Form
+                }
             }
         }
         catch
@@ -5984,7 +6593,7 @@ Function Process-Action
                     continue
                 }
 
-                if( $Operation -match 'PowerOn|Detail|Resume|Clipboard|TakeSnapshot|MessageSession|OpenInPortal|ChangeDiskType|EditTags|ChangeHostPoolSize|HostPoolDetail|HostPoolOpenInPortal|HostPoolActivityLogs|HostPoolLastLogons|VMActivityLogs|AVDLogs|AppGroups|((Manage|Revert|Delete).*Snapshot)' ) ## don't need to prompt or will prompt with more information later
+                if( $Operation -match 'PowerOn|Detail|Resume|Clipboard|TakeSnapshot|CreateSnapshot|ListSnapshots|VMRoles|MessageSession|OpenInPortal|ChangeDiskType|EditTags|ChangeHostPoolSize|HostPoolDetail|HostPoolOpenInPortal|HostPoolActivityLogs|HostPoolLastLogons|VMActivityLogs|AVDLogs|AppGroups|HostPoolSKUCheck|DeleteHostPool|VMCost|((Manage|Revert|Delete).*Snapshot)' ) ## don't need to prompt or will prompt with more information later
                 {
                     $answer = 'yes'
                 }
@@ -6266,7 +6875,7 @@ Function Process-Action
 
                                                     if( $putResponse.StatusCode -in @( 200 , 201 , 202 ) )
                                                     {
-                                                        Write-Host "Host pool '$hostPoolName' resize initiated: $currentCount -> $newCount" -ForegroundColor Green
+                                                        Write-Host "$(Get-Date -Format 'G'): Host pool '$hostPoolName' resize initiated: $currentCount -> $newCount" -ForegroundColor Green
                                                         [void][Windows.MessageBox]::Show( $mainWindow , "Host pool '$hostPoolName' resize from $currentCount to $newCount instance(s) initiated successfully." , 'Change Host Pool Size' , 'Ok' , 'Information' )
                                                     }
                                                     else
@@ -6335,9 +6944,30 @@ Function Process-Action
                                 )
                                 [string]$workspaceList     = if( $linkedWorkspaces.Count -gt 0 ) { $linkedWorkspaces -join '; ' } else { '(none)' }
 
+                                # Fetch VM size and security info from Session Host Configuration
+                                [string]$shcVmSize = ''
+                                $shcSecurityInfo   = $null
+                                try
+                                {
+                                    $shcResp = Invoke-AzRestMethod -Method GET -Path "$($hostPoolObject.Id)/sessionHostConfigurations/default?api-version=$sessionHostMgmtAPIVersion" -ErrorAction SilentlyContinue
+                                    if( $null -ne $shcResp -and $shcResp.StatusCode -in @( 200 , 201 ) )
+                                    {
+                                        $shcProps = ( $shcResp.Content | ConvertFrom-Json ).properties
+                                        if( -Not [string]::IsNullOrWhiteSpace( [string]$shcProps.vmSizeId ) ) { $shcVmSize = [string]$shcProps.vmSizeId }
+                                        elseif( -Not [string]::IsNullOrWhiteSpace( [string]$shcProps.vmSize ) ) { $shcVmSize = [string]$shcProps.vmSize }
+                                        $shcSecurityInfo = $shcProps.securityInfo
+                                    }
+                                }
+                                catch {}
+
                                 [array]$rawProps = @(
                                     @{ Property = 'Name'                         ; Value = $hostPoolObject.Name }
                                     @{ Property = 'Location'                     ; Value = $hostPoolObject.Location }
+                                    @{ Property = 'VM Size'                      ; Value = $shcVmSize }
+                                    @{ Property = 'SHC Security Type'            ; Value = if( $null -ne $shcSecurityInfo ) { [string]$shcSecurityInfo.type } else { '' } }
+                                    @{ Property = 'SHC Secure Boot'              ; Value = if( $null -ne $shcSecurityInfo -and $null -ne $shcSecurityInfo.secureBootEnabled ) { [string]$shcSecurityInfo.secureBootEnabled } else { '' } }
+                                    @{ Property = 'SHC vTPM'                     ; Value = if( $null -ne $shcSecurityInfo -and $null -ne $shcSecurityInfo.vTpmEnabled ) { [string]$shcSecurityInfo.vTpmEnabled } else { '' } }
+                                    @{ Property = 'SHC Encryption at Host'       ; Value = if( $null -ne $shcSecurityInfo -and $null -ne $shcSecurityInfo.encryptionAtHost ) { [string]$shcSecurityInfo.encryptionAtHost } else { '' } }
                                     @{ Property = 'Resource Group'               ; Value = $hostPoolRg }
                                     @{ Property = 'Friendly Name'                ; Value = $hostPoolObject.FriendlyName }
                                     @{ Property = 'Description'                  ; Value = $hostPoolObject.Description }
@@ -6438,6 +7068,7 @@ Function Process-Action
 
                                         $WPFlblHostPoolActLogsStatus.Foreground = [System.Windows.Media.Brushes]::Gray
                                         $WPFlblHostPoolActLogsStatus.Content    = 'Retrieving...'
+                                        $WPFlblHostPoolActLogsRetrievedAt.Content = "Retrieved: $(Get-Date -Format G)"
                                         $WPFdgHostPoolActLogs.ItemsSource       = $null
                                         $hostPoolActLogsWindow.Dispatcher.Invoke( [System.Windows.Threading.DispatcherPriority]::Background , [action]{} )
 
@@ -6473,7 +7104,7 @@ Function Process-Action
                                                 foreach( $entry in $logEntries )
                                                 {
                                                     $dr = $dt.NewRow()
-                                                    $dr['Time']         = $entry.EventTimestamp.ToLocalTime().ToString('g')
+                                                    $dr['Time']         = $entry.EventTimestamp.ToLocalTime().ToString('G')
                                                     $dr['Caller']       = [string]$entry.Caller
                                                     $dr['Operation']    = & $resolveActVal $entry.OperationName
                                                     $dr['Status']       = & $resolveActVal $entry.Status
@@ -6587,6 +7218,7 @@ Function Process-Action
                                             $hostPoolLastLogonsWindow.Cursor                   = [System.Windows.Input.Cursors]::Wait
                                             $WPFlblHostPoolLastLogonsStatus.Foreground          = [System.Windows.Media.Brushes]::Gray
                                             $WPFlblHostPoolLastLogonsStatus.Content             = 'Retrieving...'
+                                            $WPFlblHostPoolLastLogonsRetrievedAt.Content        = "Retrieved: $(Get-Date -Format G)"
                                             $WPFdgHostPoolLastLogons.ItemsSource               = $null
                                             $WPFtxtHostPoolLastLogonsUserFilter.Text            = ''
                                             $hostPoolLastLogonsWindow.Dispatcher.Invoke( [System.Windows.Threading.DispatcherPriority]::Background , [action]{} )
@@ -6728,6 +7360,7 @@ $summarise
 
                                             $WPFlblAVDLogsStatus.Foreground = [System.Windows.Media.Brushes]::Gray
                                             $WPFlblAVDLogsStatus.Content    = 'Retrieving...'
+                                            $WPFlblAVDLogsRetrievedAt.Content = "Retrieved: $(Get-Date -Format G)"
                                             $WPFdgAVDLogs.ItemsSource       = $null
                                             $avdLogsWindow.Dispatcher.Invoke( [System.Windows.Threading.DispatcherPriority]::Background , [action]{} )
 
@@ -6975,6 +7608,313 @@ union isfuzzy=true WVDConnections, WVDErrors, WVDCheckpoints, WVDManagement, WVD
                     }
                     break  # single selection operation
                 }
+                elseif( $operation -ieq 'Azure_HostPoolSKUCheck' )
+                {
+                    try
+                    {
+                        Import-Module -Name Az.DesktopVirtualization -Verbose:$false
+
+                        [string]$hostPoolName = $selection.HostPool
+                        if( [string]::IsNullOrWhiteSpace( $hostPoolName ) )
+                        {
+                            [void][Windows.MessageBox]::Show( $mainWindow , "VM '$($selection.Name)' is not associated with an AVD host pool." , 'SKU Check' , 'Ok' , 'Warning' )
+                        }
+                        else
+                        {
+                            $hostPoolObject = $null
+                            $hostPoolObject = Get-AzWvdHostPool -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $hostPoolName } | Select-Object -First 1
+                            [string]$hostPoolId = if( $null -ne $hostPoolObject ) { $hostPoolObject.Id } else { $null }
+
+                            if( [string]::IsNullOrWhiteSpace( $hostPoolId ) )
+                            {
+                                [void][Windows.MessageBox]::Show( $mainWindow , "Could not resolve resource ID for host pool '$hostPoolName'." , 'SKU Check' , 'Ok' , 'Error' )
+                            }
+                            else
+                            {
+                                # Try sessionHostConfigurations first (the portal's SHC blade uses this endpoint)
+                                [string]$vmSize   = $null
+                                [string]$location = [string]$hostPoolObject.Location
+                                [string]$rawDebugJson = $null
+
+                                [string]$shcPath = "$hostPoolId/sessionHostConfigurations/default?api-version=$sessionHostMgmtAPIVersion"
+                                $shcResponse = Invoke-AzRestMethod -Method GET -Path $shcPath -ErrorAction SilentlyContinue
+
+                                if( $null -ne $shcResponse -and $shcResponse.StatusCode -in @( 200 , 201 ) )
+                                {
+                                    $shcJson = $shcResponse.Content | ConvertFrom-Json
+                                    $rawDebugJson = $shcResponse.Content
+
+                                    # properties.vmSizeId is the canonical field for sessionHostConfigurations
+                                    if( -Not [string]::IsNullOrWhiteSpace( [string]$shcJson.properties.vmSizeId ) )
+                                    {
+                                        $vmSize = [string]$shcJson.properties.vmSizeId
+                                    }
+                                    # Fallback: properties.vmSize
+                                    if( [string]::IsNullOrWhiteSpace( $vmSize ) -and -Not [string]::IsNullOrWhiteSpace( [string]$shcJson.properties.vmSize ) )
+                                    {
+                                        $vmSize = [string]$shcJson.properties.vmSize
+                                    }
+                                }
+
+                                # If SHC didn't yield a size, fall back to sessionHostManagements
+                                if( [string]::IsNullOrWhiteSpace( $vmSize ) )
+                                {
+                                    [string]$shmPath = "$hostPoolId/sessionHostManagements/default?api-version=$sessionHostMgmtAPIVersion"
+                                    $shmResponse = Invoke-AzRestMethod -Method GET -Path $shmPath -ErrorAction SilentlyContinue
+
+                                    if( $null -ne $shmResponse -and $shmResponse.StatusCode -in @( 200 , 201 ) )
+                                    {
+                                        $shmJson = $shmResponse.Content | ConvertFrom-Json
+                                        if( [string]::IsNullOrWhiteSpace( $rawDebugJson ) ) { $rawDebugJson = $shmResponse.Content }
+
+                                        # properties.provisioning.vmTemplate (object or JSON string)
+                                        if( $null -ne $shmJson.properties.provisioning.vmTemplate )
+                                        {
+                                            $vmt = $shmJson.properties.provisioning.vmTemplate
+                                            if( $vmt -is [string] ) { try { $vmt = $vmt | ConvertFrom-Json } catch {} }
+                                            if( -Not [string]::IsNullOrWhiteSpace( [string]$vmt.vmSize ) ) { $vmSize = [string]$vmt.vmSize }
+                                        }
+                                        if( [string]::IsNullOrWhiteSpace( $vmSize ) -and $null -ne $shmJson.properties.vmTemplate )
+                                        {
+                                            $vmt = $shmJson.properties.vmTemplate
+                                            if( $vmt -is [string] ) { try { $vmt = $vmt | ConvertFrom-Json } catch {} }
+                                            if( -Not [string]::IsNullOrWhiteSpace( [string]$vmt.vmSize ) ) { $vmSize = [string]$vmt.vmSize }
+                                        }
+                                    }
+                                }
+
+                                # Last resort: host pool VmTemplate property
+                                if( [string]::IsNullOrWhiteSpace( $vmSize ) -and -Not [string]::IsNullOrWhiteSpace( $hostPoolObject.VmTemplate ) )
+                                {
+                                    try
+                                    {
+                                        $hpVmt = $hostPoolObject.VmTemplate | ConvertFrom-Json
+                                        if( -Not [string]::IsNullOrWhiteSpace( [string]$hpVmt.vmSize ) ) { $vmSize = [string]$hpVmt.vmSize }
+                                    }
+                                    catch {}
+                                }
+
+                                if( [string]::IsNullOrWhiteSpace( $vmSize ) )
+                                {
+                                    [string]$rawDump = if( -Not [string]::IsNullOrWhiteSpace( $rawDebugJson ) ) { $rawDebugJson | ConvertFrom-Json | ConvertTo-Json -Depth 10 } else { '(no response from either endpoint)' }
+                                    [void][Windows.MessageBox]::Show( $mainWindow , "Could not determine VM size for host pool '$hostPoolName'.`n`nSHC JSON (to identify the correct field):`n$rawDump" , 'SKU Check' , 'Ok' , 'Warning' )
+                                }
+                                else
+                                {
+                                    [string]$subId = ( $hostPoolId -split '/' )[2]
+                                    [string]$skuPath = "/subscriptions/$subId/providers/Microsoft.Compute/skus?api-version=2021-07-01&`$filter=location eq '$location'"
+                                    $skuResponse = Invoke-AzRestMethod -Method GET -Path $skuPath -ErrorAction Stop
+                                    [array]$matchingSkus = @( ( $skuResponse.Content | ConvertFrom-Json ).value |
+                                        Where-Object { $_.name -ieq $vmSize -and $_.resourceType -ieq 'virtualMachines' } )
+
+                                    if( $matchingSkus.Count -eq 0 )
+                                    {
+                                        [void][Windows.MessageBox]::Show( $mainWindow , "SKU '$vmSize' was not found for location '$location'.`nThe size may not be available in this region." , 'SKU Check' , 'Ok' , 'Warning' )
+                                    }
+                                    else
+                                    {
+                                        $sku = $matchingSkus[0]
+                                        [array]$restrictions = @( $sku.restrictions )
+
+                                        [string]$statusLine = if( $restrictions.Count -eq 0 ) { 'Available  (no restrictions)' } else { 'RESTRICTED' }
+
+                                        [string]$restrictionDetail = ''
+                                        foreach( $r in $restrictions )
+                                        {
+                                            $restrictionDetail += "`n  - Type: $($r.type)  Reason: $($r.reasonCode)"
+                                            if( $r.restrictionInfo.zones ) { $restrictionDetail += "  Zones: $($r.restrictionInfo.zones -join ', ')" }
+                                            if( $r.restrictionInfo.locations ) { $restrictionDetail += "  Locations: $($r.restrictionInfo.locations -join ', ')" }
+                                        }
+
+                                        $locInfo   = $sku.locationInfo | Select-Object -First 1
+                                        [string]$zoneDetail = if( $null -ne $locInfo -and $locInfo.zones ) { "`nAvailable zones: $($locInfo.zones -join ', ')" } else { '' }
+
+                                        # Quota for the SKU family
+                                        [string]$quotaDetail = ''
+                                        try
+                                        {
+                                            [string]$usagePath = "/subscriptions/$subId/providers/Microsoft.Compute/locations/$location/usages?api-version=2021-07-01"
+                                            $usageResponse = Invoke-AzRestMethod -Method GET -Path $usagePath -ErrorAction Stop
+                                            if( $usageResponse.StatusCode -in @( 200 , 201 ) )
+                                            {
+                                                [array]$usageItems = @( ( $usageResponse.Content | ConvertFrom-Json ).value )
+
+                                                # Match by SKU family name (e.g. "standardNVADSA10v5Family")
+                                                [string]$skuFamily = [string]$sku.family
+                                                $familyUsage = $usageItems | Where-Object { $_.name.value -ieq $skuFamily } | Select-Object -First 1
+
+                                                # Also get total regional vCPU usage
+                                                $regionalUsage = $usageItems | Where-Object { $_.name.value -ieq 'cores' } | Select-Object -First 1
+
+                                                if( $null -ne $familyUsage )
+                                                {
+                                                    [string]$familyLabel = if( -not [string]::IsNullOrWhiteSpace( $familyUsage.name.localizedValue ) ) { $familyUsage.name.localizedValue } else { $skuFamily }
+                                                    $quotaDetail += "`n`nQuota ($location):"
+                                                    $quotaDetail += "`n  $familyLabel`: $($familyUsage.currentValue) / $($familyUsage.limit)"
+                                                    [int]$familyRemaining = [int]$familyUsage.limit - [int]$familyUsage.currentValue
+                                                    $quotaDetail += "  (remaining: $familyRemaining)"
+                                                }
+                                                if( $null -ne $regionalUsage )
+                                                {
+                                                    $quotaDetail += "`n  Total Regional vCPUs: $($regionalUsage.currentValue) / $($regionalUsage.limit)"
+                                                }
+                                                if( $null -eq $familyUsage -and $null -eq $regionalUsage )
+                                                {
+                                                    $quotaDetail += "`n`nQuota: (no matching quota entry found for family '$skuFamily')"
+                                                }
+                                            }
+                                        }
+                                        catch
+                                        {
+                                            $quotaDetail = "`n`nQuota: (error retrieving usage - $($_.Exception.Message))"
+                                        }
+
+                                        [string]$msg = "Host Pool:  $hostPoolName`nVM Size:    $vmSize`nLocation:   $location`n`nStatus: $statusLine$restrictionDetail$zoneDetail$quotaDetail"
+                                        [string]$icon = if( $restrictions.Count -eq 0 ) { 'Information' } else { 'Warning' }
+                                        [void][Windows.MessageBox]::Show( $mainWindow , $msg , 'SKU Check' , 'Ok' , $icon )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        Write-Warning -Message "SKU Check error: $($_.Exception.Message)"
+                        [void][Windows.MessageBox]::Show( $mainWindow , "SKU Check failed.`n$($_.Exception.Message)" , 'SKU Check' , 'Ok' , 'Error' )
+                    }
+                    break  # single selection operation
+                }
+                elseif( $operation -ieq 'Azure_DeleteHostPool' )
+                {
+                    try
+                    {
+                        Import-Module -Name Az.DesktopVirtualization -Verbose:$false
+                        Import-Module -Name Az.Compute             -Verbose:$false
+
+                        [string]$hostPoolName = $selection.HostPool
+                        if( [string]::IsNullOrWhiteSpace( $hostPoolName ) )
+                        {
+                            [void][Windows.MessageBox]::Show( $mainWindow , "VM '$($selection.Name)' is not associated with an AVD host pool." , 'Delete Host Pool' , 'Ok' , 'Warning' )
+                        }
+                        else
+                        {
+                            $hostPoolObject = Get-AzWvdHostPool -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $hostPoolName } | Select-Object -First 1
+                            if( $null -eq $hostPoolObject )
+                            {
+                                [void][Windows.MessageBox]::Show( $mainWindow , "Could not find host pool '$hostPoolName'." , 'Delete Host Pool' , 'Ok' , 'Error' )
+                            }
+                            else
+                            {
+                                [string]$hostPoolRg = ( $hostPoolObject.Id -split '/' )[4]
+                                [array]$sessionHosts = @( Get-AzWvdSessionHost -HostPoolName $hostPoolName -ResourceGroupName $hostPoolRg -ErrorAction SilentlyContinue )
+                                [array]$appGroups    = @( Get-AzWvdApplicationGroup -ErrorAction SilentlyContinue | Where-Object { $_.HostPoolArmPath -ieq $hostPoolObject.Id } )
+
+                                # Build VM info list from session host names, then look up each VM to get resource group
+                                [System.Collections.Generic.List[pscustomobject]]$vmInfoList = [System.Collections.Generic.List[pscustomobject]]::new()
+                                foreach( $sh in $sessionHosts )
+                                {
+                                    # Session host Name is "hostpoolname/vmname.domain.com" — extract the computer name
+                                    [string]$shShortName = ( ( $sh.Name -split '/' )[-1] -split '\.' )[0]
+                                    if( [string]::IsNullOrWhiteSpace( $shShortName ) ) { continue }
+
+                                    # Look up the VM to find its resource group (searches all RGs in the subscription)
+                                    $foundVM = Get-AzVM -Name $shShortName -ErrorAction SilentlyContinue | Select-Object -First 1
+                                    [string]$vmRg = if( $null -ne $foundVM ) { $foundVM.ResourceGroupName } else { $hostPoolRg }
+                                    $vmInfoList.Add( [pscustomobject]@{ Name = $shShortName ; ResourceGroup = $vmRg ; SessionHostId = $sh.Id } )
+                                }
+
+                                [string]$vmListText  = if( $vmInfoList.Count -gt 0 ) { ( $vmInfoList | ForEach-Object { "  - $($_.Name)  (rg: $($_.ResourceGroup))" } ) -join "`n" } else { '  (no session hosts found)' }
+                                [string]$agListText  = if( $appGroups.Count -gt 0 ) { ( $appGroups | ForEach-Object { "  - $($_.Name)" } ) -join "`n" } else { '  (none)' }
+                                [string]$confirmMsg  = "Permanently delete host pool '$hostPoolName'?`n`nVMs ($($vmInfoList.Count)):`n$vmListText`n`nApplication groups ($($appGroups.Count)):`n$agListText`n`nThis CANNOT be undone."
+
+                                if( [Windows.MessageBox]::Show( $mainWindow , $confirmMsg , 'Confirm: Delete Host Pool' , 'YesNo' , 'Warning' ) -ieq 'Yes' )
+                                {
+                                    # Save Azure context so background jobs can authenticate
+                                    [string]$delContextPath = Join-Path -Path $env:TEMP -ChildPath ( 'mstsc-sizer-delctx-{0}.json' -f [guid]::NewGuid().ToString() )
+                                    Save-AzContext -Path $delContextPath -Force -ErrorAction Stop | Out-Null
+
+                                    # Delete VMs in parallel using background jobs
+                                    [System.Collections.Generic.List[System.Management.Automation.Job]]$vmJobs = [System.Collections.Generic.List[System.Management.Automation.Job]]::new()
+                                    foreach( $vmInfo in $vmInfoList )
+                                    {
+                                        Write-Host "Starting VM deletion job: $($vmInfo.Name)  ($($vmInfo.ResourceGroup))" -ForegroundColor Yellow
+                                        $vmJobs.Add( ( Start-Job -ArgumentList $vmInfo.Name , $vmInfo.ResourceGroup , $delContextPath -ScriptBlock {
+                                            Param( [string]$vmName , [string]$vmRg , [string]$ctxPath )
+                                            Import-Module Az.Accounts -Verbose:$false
+                                            Import-Module Az.Compute  -Verbose:$false
+                                            Import-AzContext -Path $ctxPath -ErrorAction Stop | Out-Null
+                                            Remove-AzVM -Name $vmName -ResourceGroupName $vmRg -Force -ErrorAction Stop | Out-Null
+                                            "Deleted VM: $vmName"
+                                        } ) )
+                                    }
+
+                                    # Also delete session hosts in parallel (REST calls, fast)
+                                    [System.Collections.Generic.List[System.Management.Automation.Job]]$shJobs = [System.Collections.Generic.List[System.Management.Automation.Job]]::new()
+                                    foreach( $sh in $sessionHosts )
+                                    {
+                                        [string]$shPath = "$($sh.Id)?api-version=$AVDAPIversion"
+                                        $shJobs.Add( ( Start-Job -ArgumentList $shPath , $delContextPath -ScriptBlock {
+                                            Param( [string]$path , [string]$ctxPath )
+                                            Import-Module Az.Accounts -Verbose:$false
+                                            Import-AzContext -Path $ctxPath -ErrorAction Stop | Out-Null
+                                            Invoke-AzRestMethod -Method DELETE -Path $path -ErrorAction SilentlyContinue | Out-Null
+                                        } ) )
+                                    }
+
+                                    # Wait for all VM and session host jobs
+                                    [array]$allParallelJobs = @( $vmJobs ) + @( $shJobs )
+                                    if( $allParallelJobs.Count -gt 0 )
+                                    {
+                                        Write-Host "Waiting for $($vmJobs.Count) VM deletion job(s) and $($shJobs.Count) session host deletion job(s)..." -ForegroundColor Cyan
+                                        $allParallelJobs | Wait-Job | ForEach-Object {
+                                            $jobResult = Receive-Job -Job $_ -ErrorAction SilentlyContinue
+                                            if( $_.State -eq 'Failed' )
+                                            {
+                                                Write-Warning "Job '$($_.Name)' failed: $($_.ChildJobs[0].JobStateInfo.Reason.Message)"
+                                            }
+                                            elseif( -Not [string]::IsNullOrWhiteSpace( $jobResult ) )
+                                            {
+                                                Write-Host "  $jobResult" -ForegroundColor Green
+                                            }
+                                            Remove-Job -Job $_ -Force -ErrorAction SilentlyContinue
+                                        }
+                                    }
+
+                                    try { Remove-Item -Path $delContextPath -Force -ErrorAction SilentlyContinue } catch {}
+
+                                    # Delete application groups (required before host pool can be deleted)
+                                    foreach( $ag in $appGroups )
+                                    {
+                                        try
+                                        {
+                                            [string]$agRg = ( $ag.Id -split '/' )[4]
+                                            Write-Host "Deleting application group: $($ag.Name)  ($agRg)" -ForegroundColor Yellow
+                                            $null = Remove-AzWvdApplicationGroup -Name $ag.Name -ResourceGroupName $agRg -ErrorAction Stop
+                                            Write-Host "  App group deleted: $($ag.Name)" -ForegroundColor Green
+                                        }
+                                        catch
+                                        {
+                                            Write-Warning "Failed to delete application group '$($ag.Name)': $($_.Exception.Message)"
+                                        }
+                                    }
+
+                                    # Delete the host pool
+                                    Write-Host "Deleting host pool: $hostPoolName" -ForegroundColor Yellow
+                                    $removeResult = Remove-AzWvdHostPool -Name $hostPoolName -ResourceGroupName $hostPoolRg -Force -ErrorAction Stop
+                                    Write-Host "$(Get-Date -Format G) Host pool deleted: $hostPoolName" -ForegroundColor Green
+
+                                    $refreshAzureList = $true
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        Write-Warning -Message "Delete Host Pool error: $($_.Exception.Message)"
+                        [void][Windows.MessageBox]::Show( $mainWindow , "Delete Host Pool failed.`n$($_.Exception.Message)" , 'Delete Host Pool' , 'Ok' , 'Error' )
+                    }
+                    break  # single selection operation
+                }
                 elseif( $operation -ieq 'Azure_VMActivityLogs' )
                 {
                     try
@@ -7010,6 +7950,7 @@ union isfuzzy=true WVDConnections, WVDErrors, WVDCheckpoints, WVDManagement, WVD
 
                                     $WPFlblVMActLogsStatus.Foreground = [System.Windows.Media.Brushes]::Gray
                                     $WPFlblVMActLogsStatus.Content    = 'Retrieving...'
+                                    $WPFlblVMActLogsRetrievedAt.Content = "Retrieved: $(Get-Date -Format G)"
                                     $WPFdgVMActLogs.ItemsSource       = $null
                                     $vmActLogsWindow.Dispatcher.Invoke( [System.Windows.Threading.DispatcherPriority]::Background , [action]{} )
 
@@ -7045,7 +7986,7 @@ union isfuzzy=true WVDConnections, WVDErrors, WVDCheckpoints, WVDManagement, WVD
                                             foreach( $entry in $logEntries )
                                             {
                                                 $dr = $dt.NewRow()
-                                                $dr['Time']         = $entry.EventTimestamp.ToLocalTime().ToString('g')
+                                                $dr['Time']         = $entry.EventTimestamp.ToLocalTime().ToString('G')
                                                 $dr['Caller']       = [string]$entry.Caller
                                                 $dr['Operation']    = & $resolveActVal $entry.OperationName
                                                 $dr['Status']       = & $resolveActVal $entry.Status
@@ -7361,7 +8302,27 @@ union isfuzzy=true WVDConnections, WVDErrors, WVDCheckpoints, WVDManagement, WVD
                         [void]$detailsBuilder.AppendLine( "VM ID           : $($vm.VmId)" )
                         [void]$detailsBuilder.AppendLine( "Subscription    : $($selection.Subscription)" )
                         [void]$detailsBuilder.AppendLine( "VM Size         : $($vm.HardwareProfile.VmSize)" )
+                        try
+                        {
+                            [string]$vmSizeSubId = $selection.SubscriptionId
+                            if( [string]::IsNullOrWhiteSpace( $vmSizeSubId ) ) { $vmSizeSubId = (Get-AzContext).Subscription.Id }
+                            $vmSizesResp = Invoke-AzRestMethod -Method GET -Path "/subscriptions/$vmSizeSubId/providers/Microsoft.Compute/locations/$($vm.Location)/vmSizes?api-version=2021-07-01" -ErrorAction Stop
+                            if( $vmSizesResp.StatusCode -eq 200 )
+                            {
+                                $vmSizeInfo = ($vmSizesResp.Content | ConvertFrom-Json).value | Where-Object name -ieq $vm.HardwareProfile.VmSize | Select-Object -First 1
+                                if( $null -ne $vmSizeInfo )
+                                {
+                                    [void]$detailsBuilder.AppendLine( "  vCPUs          : $($vmSizeInfo.numberOfCores)" )
+                                    [void]$detailsBuilder.AppendLine( "  Memory         : $([math]::Round( $vmSizeInfo.memoryInMB / 1024 , 2 )) GB  ($($vmSizeInfo.memoryInMB) MB)" )
+                                }
+                            }
+                        }
+                        catch {}
                         [void]$detailsBuilder.AppendLine( "Time Created    : $($vm.TimeCreated)" )
+                        if( -not [string]::IsNullOrWhiteSpace( $vm.OSProfile.AdminUsername ) )
+                        {
+                            [void]$detailsBuilder.AppendLine( "Admin Username  : $($vm.OSProfile.AdminUsername)" )
+                        }
                         if( $null -ne $vmStatus )
                         {
                             [string]$powerState = ( $vmStatus.Statuses | Where-Object Code -match '^PowerState/' | Select-Object -First 1 -ExpandProperty DisplayStatus )
@@ -7673,6 +8634,382 @@ union isfuzzy=true WVDConnections, WVDErrors, WVDCheckpoints, WVDManagement, WVD
                     catch
                     {
                         [void][Windows.MessageBox]::Show( $mainWindow , "Failed to retrieve detail for $($selection.Name)`n$($_.Exception.Message)" , 'Azure VM Detail' , 'Ok' ,'Error' )
+                    }
+                }
+                elseif( $operation -ieq 'Azure_VMCost' )
+                {
+                    try
+                    {
+                        Import-Module -Name Az.Compute -Verbose:$false
+
+                        [string]$vmName  = $selection.Name
+                        [string]$vmRg    = $selection.ResourceGroup
+                        [string]$subId   = $selection.SubscriptionId
+                        if( [string]::IsNullOrWhiteSpace( $subId ) ) { $subId = (Get-AzContext).Subscription.Id }
+
+                        # Get VM size and location
+                        $vm = Get-AzVM -Name $vmName -ResourceGroupName $vmRg -ErrorAction Stop
+                        [string]$vmSize   = $vm.HardwareProfile.VmSize
+                        [string]$location = $vm.Location
+
+                        # ── Retail price per hour (public Prices API, no auth) ──────────────
+                        [string]$priceMsg = ''
+                        try
+                        {
+                            [string]$priceFilter = [uri]::EscapeDataString( "serviceName eq 'Virtual Machines' and armRegionName eq '$location' and armSkuName eq '$vmSize' and priceType eq 'Consumption'" )
+                            $priceResp = Invoke-RestMethod -Uri "https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&`$filter=$priceFilter" -Method GET -ErrorAction Stop
+                            [array]$priceItems = @( $priceResp.Items | Where-Object { $_.type -ieq 'Consumption' -and $_.productName -notmatch 'Windows|Spot|Low Priority' } | Sort-Object -Property retailPrice )
+                            if( $priceItems.Count -gt 0 )
+                            {
+                                $p = $priceItems[0]
+                                $priceMsg = "`nRetail price/hr (Linux):  $($p.currencyCode) $([math]::Round( $p.retailPrice , 4 ))"
+                                $priceMsg += "  ($($p.skuName))"
+                                # Also find Windows price
+                                $winItem = $priceResp.Items | Where-Object { $_.type -ieq 'Consumption' -and $_.productName -match 'Windows' -and $_.productName -notmatch 'Spot|Low Priority' } | Sort-Object -Property retailPrice | Select-Object -First 1
+                                if( $null -ne $winItem )
+                                {
+                                    $priceMsg += "`nRetail price/hr (Windows): $($winItem.currencyCode) $([math]::Round( $winItem.retailPrice , 4 ))"
+                                }
+                            }
+                            else
+                            {
+                                $priceMsg = "`nRetail price: (no matching price found for $vmSize in $location)"
+                            }
+                        }
+                        catch
+                        {
+                            $priceMsg = "`nRetail price: (error - $($_.Exception.Message))"
+                        }
+
+                        # ── Actual cost last 30 days (Cost Management query) ─────────────
+                        [string]$costMsg = ''
+                        try
+                        {
+                            [string]$vmResourceId = "/subscriptions/$subId/resourceGroups/$vmRg/providers/Microsoft.Compute/virtualMachines/$vmName"
+                            [string]$dateFrom = (Get-Date).AddDays( -30 ).ToString( 'yyyy-MM-dd' )
+                            [string]$dateTo   = (Get-Date).ToString( 'yyyy-MM-dd' )
+                            [string]$costPayload = @"
+{"type":"ActualCost","timeframe":"Custom","timePeriod":{"from":"$dateFrom","to":"$dateTo"},"dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"},"totalCostUSD":{"name":"CostUSD","function":"Sum"}},"filter":{"dimensions":{"name":"ResourceId","operator":"In","values":["$vmResourceId"]}}}}
+"@
+                            $costResp = Invoke-AzRestMethod -Method POST -Path "/subscriptions/$subId/providers/Microsoft.CostManagement/query?api-version=2023-11-01" -Payload $costPayload -ErrorAction Stop
+                            if( $costResp.StatusCode -in @( 200 , 201 ) )
+                            {
+                                $costData = $costResp.Content | ConvertFrom-Json
+                                [array]$cols = @( $costData.properties.columns )
+                                [array]$rows = @( $costData.properties.rows )
+                                if( $rows.Count -gt 0 )
+                                {
+                                    [int]$costIdx    = ( $cols | Select-Object -ExpandProperty name ).IndexOf( 'Cost' )
+                                    [int]$currIdx    = ( $cols | Select-Object -ExpandProperty name ).IndexOf( 'Currency' )
+                                    $costVal  = if( $costIdx -ge 0 ) { $rows[0][$costIdx] } else { 0 }
+                                    $currency = if( $currIdx -ge 0 ) { $rows[0][$currIdx] } else { '' }
+                                    $costMsg  = "`nActual cost (last 30 days): $currency $([math]::Round( [double]$costVal , 2 ))"
+                                }
+                                else
+                                {
+                                    $costMsg = "`nActual cost (last 30 days): (no billing data found)"
+                                }
+                            }
+                            else
+                            {
+                                [string]$errDetail = $costResp.Content
+                                try { $errDetail = ($costResp.Content | ConvertFrom-Json).error.message } catch {}
+                                $costMsg = "`nActual cost (last 30 days): (query failed - $errDetail)"
+                            }
+                        }
+                        catch
+                        {
+                            $costMsg = "`nActual cost (last 30 days): (error - $($_.Exception.Message))"
+                        }
+
+                        [string]$msg = "VM:        $vmName`nSize:      $vmSize`nLocation:  $location`n$priceMsg$costMsg"
+                        [void][Windows.MessageBox]::Show( $mainWindow , $msg , 'VM Cost' , 'Ok' , 'Information' )
+                    }
+                    catch
+                    {
+                        Write-Warning -Message "VM Cost error: $($_.Exception.Message)"
+                        [void][Windows.MessageBox]::Show( $mainWindow , "VM Cost failed.`n$($_.Exception.Message)" , 'VM Cost' , 'Ok' , 'Error' )
+                    }
+                }
+                elseif( $operation -ieq 'Azure_VMRoles' )
+                {
+                    try
+                    {
+                        Import-Module -Name Az.Resources -Verbose:$false
+
+                        [string]$vmName = $selection.Name
+                        [string]$vmRg   = $selection.ResourceGroup
+                        [string]$subId  = $selection.SubscriptionId
+                        if( [string]::IsNullOrWhiteSpace( $subId ) ) { $subId = (Get-AzContext).Subscription.Id }
+
+                        [string]$vmScope  = "/subscriptions/$subId/resourceGroups/$vmRg/providers/Microsoft.Compute/virtualMachines/$vmName"
+                        [string]$rgScope  = "/subscriptions/$subId/resourceGroups/$vmRg"
+                        [string]$subScope = "/subscriptions/$subId"
+
+                        [array]$allAssignments = @( Get-AzRoleAssignment -Scope $vmScope -ErrorAction Stop )
+
+                        $scopeLabel = @{
+                            $vmScope  = 'Direct (VM)'
+                            $rgScope  = 'Inherited - Resource Group'
+                            $subScope = 'Inherited - Subscription'
+                        }
+
+                        [array]$rows = @( $allAssignments | Sort-Object { $scopeLabel[$_.Scope] }, RoleDefinitionName | ForEach-Object {
+                            [string]$level = if( $scopeLabel.ContainsKey( $_.Scope ) ) { $scopeLabel[$_.Scope] } else { 'Inherited - Management Group' }
+                            [PSCustomObject]@{
+                                'Assigned From' = $level
+                                'Role'          = $_.RoleDefinitionName
+                                'Principal'     = if( -not [string]::IsNullOrWhiteSpace( $_.DisplayName ) ) { $_.DisplayName } else { $_.ObjectId }
+                                'Type'          = $_.ObjectType
+                                'Sign-In / UPN' = $_.SignInName
+                            }
+                        })
+
+                        $header  = "Role Assignments: $vmName`nSubscription: $($selection.Subscription)  |  Resource Group: $vmRg  |  Total: $($rows.Count)`n"
+                        $table   = $rows | Format-Table -AutoSize | Out-String -Width 220
+                        Show-AzureRunCommandOutputWindow -computerName $vmName -scriptText 'Roles / IAM' -outputText ( $header + $table.Trim() )
+                    }
+                    catch
+                    {
+                        [void][Windows.MessageBox]::Show( $mainWindow , "Failed to retrieve role assignments.`n$($_.Exception.Message)" , 'Roles / IAM' , 'Ok' , 'Error' )
+                    }
+                }
+                elseif( $operation -ieq 'Azure_CreateSnapshot' )
+                {
+                    try
+                    {
+                        Import-Module -Name Az.Compute -Verbose:$false
+
+                        [string]$vmName = $selection.Name
+                        [string]$vmRg   = $selection.ResourceGroup
+
+                        $vm       = Get-AzVM -Name $vmName -ResourceGroupName $vmRg -ErrorAction Stop
+                        $vmStatus = Get-AzVM -Name $vmName -ResourceGroupName $vmRg -Status -ErrorAction SilentlyContinue
+                        [string]$powerState = if( $null -ne $vmStatus ) { $vmStatus.Statuses | Where-Object Code -match '^PowerState/' | Select-Object -First 1 -ExpandProperty Code } else { '' }
+                        [bool]$wasRunning = $powerState -match 'running|starting'
+
+                        # Offer to shut down first for a consistent snapshot
+                        if( $wasRunning )
+                        {
+                            $shutdownChoice = [Windows.MessageBox]::Show( $mainWindow , "'$vmName' is currently running.`n`nFor a consistent (crash-consistent) snapshot the VM should be stopped first.`n`nShut down the VM before taking the snapshot?" , 'Create Snapshot' , 'YesNoCancel' , 'Question' )
+                            if( $shutdownChoice -eq 'Cancel' ) { return }
+                            if( $shutdownChoice -eq 'Yes' )
+                            {
+                                Stop-AzVM -Name $vmName -ResourceGroupName $vmRg -Force -ErrorAction Stop | Out-Null
+                            }
+                        }
+
+                        # Prompt for snapshot name and tags
+                        if( -not ( $createSnapWindow = New-WPFWindow -inputXAML $azureCreateSnapshotXAML ) ) { return }
+                        if( $WPFchkDarkMode.IsChecked ) { Apply-DarkMode -window $createSnapWindow }
+                        $createSnapWindow.Title                 = "Create Snapshot - $vmName"
+                        $WPFlblSnapshotCreateInfo.Content       = "Name for snapshot of '$vmName' (disk: $($vm.StorageProfile.OsDisk.Name)):"
+                        $WPFtxtSnapshotCreateName.Text          = "$vmName-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')"
+                        [void]$WPFtxtSnapshotCreateName.Focus()
+                        $WPFtxtSnapshotCreateName.SelectAll()
+
+                        $WPFlistViewSnapshotTags.Add_SelectionChanged({
+                            $WPFbtnRemoveTag.IsEnabled = ( $null -ne $WPFlistViewSnapshotTags.SelectedItem )
+                        })
+                        $WPFbtnAddTag.Add_Click({
+                            $_.Handled = $true
+                            [string]$k = $WPFtxtTagKey.Text.Trim()
+                            [string]$v = $WPFtxtTagValue.Text.Trim()
+                            if( [string]::IsNullOrWhiteSpace( $k ) ) { return }
+                            # Replace if key already exists
+                            $existing = $WPFlistViewSnapshotTags.Items | Where-Object Key -ieq $k | Select-Object -First 1
+                            if( $null -ne $existing ) { [void]$WPFlistViewSnapshotTags.Items.Remove( $existing ) }
+                            [void]$WPFlistViewSnapshotTags.Items.Add( [PSCustomObject]@{ Key = $k ; Value = $v } )
+                            $WPFtxtTagKey.Clear()
+                            $WPFtxtTagValue.Clear()
+                            [void]$WPFtxtTagKey.Focus()
+                        })
+                        $WPFbtnRemoveTag.Add_Click({
+                            $_.Handled = $true
+                            $sel = $WPFlistViewSnapshotTags.SelectedItem
+                            if( $null -ne $sel ) { [void]$WPFlistViewSnapshotTags.Items.Remove( $sel ) }
+                            $WPFbtnRemoveTag.IsEnabled = $false
+                        })
+                        $WPFbtnSnapshotCreateOk.Add_Click({ $_.Handled = $true ; $createSnapWindow.DialogResult = $true ; $createSnapWindow.Close() })
+
+                        if( -not $createSnapWindow.ShowDialog() ) { return }
+
+                        [string]$snapshotName = $WPFtxtSnapshotCreateName.Text.Trim()
+                        if( [string]::IsNullOrWhiteSpace( $snapshotName ) ) { return }
+
+                        # Build tags hashtable
+                        [hashtable]$snapshotTags = @{}
+                        ForEach( $tagItem in $WPFlistViewSnapshotTags.Items )
+                        {
+                            if( -not [string]::IsNullOrWhiteSpace( $tagItem.Key ) ) { $snapshotTags[ $tagItem.Key ] = $tagItem.Value }
+                        }
+
+                        if( $snapshotName -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_\.\-]{0,79}$' )
+                        {
+                            [void][Windows.MessageBox]::Show( $mainWindow , "Invalid snapshot name. Use 1-80 characters starting with a letter or number, containing only letters, numbers, hyphens, underscores or periods." , 'Create Snapshot' , 'Ok' , 'Warning' )
+                            return
+                        }
+
+                        $snapshotConfig = New-AzSnapshotConfig -SourceUri $vm.StorageProfile.OsDisk.ManagedDisk.Id -Location $vm.Location -CreateOption Copy -ErrorAction Stop
+                        $newSnapshot    = if( $snapshotTags.Count -gt 0 ) {
+                                              New-AzSnapshot -ResourceGroupName $vmRg -SnapshotName $snapshotName -Snapshot $snapshotConfig -Tag $snapshotTags -ErrorAction Stop
+                                          } else {
+                                              New-AzSnapshot -ResourceGroupName $vmRg -SnapshotName $snapshotName -Snapshot $snapshotConfig -ErrorAction Stop
+                                          }
+
+                        [void][Windows.MessageBox]::Show( $mainWindow , "Snapshot '$snapshotName' created successfully.`nDisk: $($vm.StorageProfile.OsDisk.Name)`nTime: $($newSnapshot.TimeCreated.ToString('G'))" , 'Create Snapshot' , 'Ok' , 'Information' )
+                    }
+                    catch
+                    {
+                        [void][Windows.MessageBox]::Show( $mainWindow , "Failed to create snapshot.`n$($_.Exception.Message)" , 'Create Snapshot' , 'Ok' , 'Error' )
+                    }
+                }
+                elseif( $operation -ieq 'Azure_ListSnapshots' )
+                {
+                    try
+                    {
+                        Import-Module -Name Az.Compute -Verbose:$false
+
+                        [string]$vmName = $selection.Name
+                        [string]$vmRg   = $selection.ResourceGroup
+
+                        $vm         = Get-AzVM -Name $vmName -ResourceGroupName $vmRg -ErrorAction Stop
+                        [string]$osDiskId   = $vm.StorageProfile.OsDisk.ManagedDisk.Id
+                        [string]$osDiskName = $vm.StorageProfile.OsDisk.Name
+                        [string]$vmNamePattern = [regex]::Escape( $vmName )
+
+                        [array]$snapshots = @( Get-AzSnapshot -ResourceGroupName $vmRg -ErrorAction Stop |
+                            Where-Object { $_.CreationData.SourceResourceId -ieq $osDiskId -or
+                                           $_.CreationData.SourceResourceId -imatch $vmNamePattern } |
+                            Sort-Object -Property TimeCreated -Descending )
+
+                        if( $snapshots.Count -eq 0 )
+                        {
+                            [void][Windows.MessageBox]::Show( $mainWindow , "No snapshots found for $vmName.`n`n(Looked for snapshots of OS disk: $osDiskName)" , 'List Snapshots' , 'Ok' , 'Information' )
+                            return
+                        }
+
+                        if( -not ( $snapshotListWindow = New-WPFWindow -inputXAML $azureSnapshotListXAML ) ) { return }
+                        if( $WPFchkDarkMode.IsChecked ) { Apply-DarkMode -window $snapshotListWindow }
+
+                        $snapshotListWindow.Title          = "Snapshots for $vmName"
+                        $WPFlblSnapshotHeader.Content      = "$($snapshots.Count) snapshot(s) of OS disk '$osDiskName':"
+
+                        ForEach( $snap in $snapshots )
+                        {
+                            [void]$WPFlistViewAzureSnapshots.Items.Add( [PSCustomObject]@{
+                                Name        = $snap.Name
+                                TimeCreated = $snap.TimeCreated.ToString('G')
+                                DiskSizeGB  = $snap.DiskSizeGB
+                                SourceDisk  = ( $snap.CreationData.SourceResourceId -split '/' | Select-Object -Last 1 )
+                                SnapshotId  = $snap.Id
+                                SnapshotName = $snap.Name
+                            })
+                        }
+
+                        $WPFlistViewAzureSnapshots.Add_SelectionChanged({
+                            [bool]$hasSelection = ( $null -ne $WPFlistViewAzureSnapshots.SelectedItem )
+                            $WPFbtnSnapshotRevert.IsEnabled = $hasSelection
+                            $WPFbtnSnapshotDelete.IsEnabled = $hasSelection
+                        })
+
+                        $script:azureSnapshotToRevert = $null
+                        $WPFbtnSnapshotRevert.Add_Click({
+                            $_.Handled = $true
+                            $script:azureSnapshotToRevert = $WPFlistViewAzureSnapshots.SelectedItem
+                            $snapshotListWindow.DialogResult = $true
+                            $snapshotListWindow.Close()
+                        })
+
+                        $WPFbtnSnapshotDelete.Add_Click({
+                            $_.Handled = $true
+                            $selItem = $WPFlistViewAzureSnapshots.SelectedItem
+                            if( $null -eq $selItem ) { return }
+                            $delConfirm = [Windows.MessageBox]::Show( $snapshotListWindow ,
+                                "Permanently delete snapshot '$($selItem.SnapshotName)'?`n`nThis cannot be undone." ,
+                                'Delete Snapshot' , 'YesNo' , 'Warning' )
+                            if( $delConfirm -eq 'Yes' )
+                            {
+                                try
+                                {
+                                    Remove-AzSnapshot -ResourceGroupName $vmRg -SnapshotName $selItem.SnapshotName -Force -ErrorAction Stop | Out-Null
+                                    [void]$WPFlistViewAzureSnapshots.Items.Remove( $selItem )
+                                    $WPFbtnSnapshotRevert.IsEnabled = $false
+                                    $WPFbtnSnapshotDelete.IsEnabled = $false
+                                    $WPFlblSnapshotHeader.Content = "$($WPFlistViewAzureSnapshots.Items.Count) snapshot(s) of OS disk '$osDiskName':"
+                                }
+                                catch
+                                {
+                                    [void][Windows.MessageBox]::Show( $snapshotListWindow , "Delete failed.`n$($_.Exception.Message)" , 'Delete Snapshot' , 'Ok' , 'Error' )
+                                }
+                            }
+                        })
+
+                        [void]$snapshotListWindow.ShowDialog()
+
+                        if( $null -ne $script:azureSnapshotToRevert )
+                        {
+                            [string]$snapName = $script:azureSnapshotToRevert.SnapshotName
+                            [string]$snapId   = $script:azureSnapshotToRevert.SnapshotId
+
+                            $confirm = [Windows.MessageBox]::Show( $mainWindow ,
+                                "Revert '$vmName' to snapshot '$snapName'?`n`nThis will:`n  1. Stop and deallocate the VM`n  2. Create a new managed disk from the snapshot`n  3. Replace the VM's OS disk with the new disk`n`nThe VM will remain deallocated after the revert.`nThe old OS disk will be detached but not deleted.`n`nAre you sure?" ,
+                                'Revert to Snapshot' , 'YesNo' , 'Warning' )
+
+                            if( $confirm -eq 'Yes' )
+                            {
+                                try
+                                {
+                                    # Ensure VM is stopped
+                                    $vmStatus2 = Get-AzVM -Name $vmName -ResourceGroupName $vmRg -Status -ErrorAction SilentlyContinue
+                                    [string]$ps2 = if( $null -ne $vmStatus2 ) { $vmStatus2.Statuses | Where-Object Code -match '^PowerState/' | Select-Object -First 1 -ExpandProperty Code } else { '' }
+                                    if( $ps2 -notmatch 'deallocated|stopped' )
+                                    {
+                                        Stop-AzVM -Name $vmName -ResourceGroupName $vmRg -Force -ErrorAction Stop | Out-Null
+                                    }
+
+                                    # Get snapshot and current disk SKU
+                                    $snapObj     = Get-AzSnapshot -ResourceGroupName $vmRg -SnapshotName $snapName -ErrorAction Stop
+                                    $currentDisk = $null
+                                    try { $currentDisk = Get-AzDisk -ResourceGroupName $vmRg -DiskName $osDiskName -ErrorAction Stop } catch {}
+                                    [string]$diskSku = if( $null -ne $currentDisk -and -not [string]::IsNullOrWhiteSpace( $currentDisk.Sku.Name ) ) { $currentDisk.Sku.Name } else { 'Premium_LRS' }
+
+                                    # Detect VM zone so new disk is created in the same zone
+                                    [string[]]$vmZones = @( $vm.Zones )
+
+                                    # Create new managed disk from snapshot
+                                    [string]$newDiskName = "$vmName-reverted-$(Get-Date -Format 'yyyyMMddHHmmss')"
+                                    if( $vmZones.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace( $vmZones[0] ) )
+                                    {
+                                        $diskConfig = New-AzDiskConfig -Location $vm.Location -SourceResourceId $snapObj.Id -CreateOption Copy -SkuName $diskSku -Zone $vmZones -ErrorAction Stop
+                                    }
+                                    else
+                                    {
+                                        $diskConfig = New-AzDiskConfig -Location $vm.Location -SourceResourceId $snapObj.Id -CreateOption Copy -SkuName $diskSku -ErrorAction Stop
+                                    }
+                                    $newDisk    = New-AzDisk -ResourceGroupName $vmRg -DiskName $newDiskName -Disk $diskConfig -ErrorAction Stop
+
+                                    # Replace OS disk on VM
+                                    $vmObj = Get-AzVM -Name $vmName -ResourceGroupName $vmRg -ErrorAction Stop
+                                    $vmObj.StorageProfile.OsDisk.ManagedDisk.Id = $newDisk.Id
+                                    $vmObj.StorageProfile.OsDisk.Name           = $newDisk.Name
+                                    Update-AzVM -VM $vmObj -ResourceGroupName $vmRg -ErrorAction Stop | Out-Null
+
+                                    [void][Windows.MessageBox]::Show( $mainWindow ,
+                                        "'$vmName' has been reverted to snapshot '$snapName'.`n`nNew OS disk: $newDiskName`nOld OS disk: $osDiskName (detached, not deleted)`n`nThe VM is deallocated. Start it manually when ready." ,
+                                        'Revert to Snapshot' , 'Ok' , 'Information' )
+                                }
+                                catch
+                                {
+                                    [void][Windows.MessageBox]::Show( $mainWindow , "Revert failed.`n$($_.Exception.Message)" , 'Revert to Snapshot' , 'Ok' , 'Error' )
+                                }
+                            }
+                        }
+                        $script:azureSnapshotToRevert = $null
+                    }
+                    catch
+                    {
+                        [void][Windows.MessageBox]::Show( $mainWindow , "Failed to list snapshots.`n$($_.Exception.Message)" , 'List Snapshots' , 'Ok' , 'Error' )
                     }
                 }
                 elseif( $operation -ieq 'Azure_DetailExtensionsApplications' )
@@ -8917,6 +10254,30 @@ else ## if not passed displayNumber or displaymanufacturer , display a GUI with 
         
         Set-WindowContent
         
+        $WPFchkDarkMode.Add_Checked({
+            $script:darkModeEnabled = $true
+            Apply-DarkMode -window $mainWindow
+        })
+        $WPFchkDarkMode.Add_Unchecked({
+            $script:darkModeEnabled = $false
+            Remove-DarkMode -window $mainWindow
+        })
+
+        # Sync checkbox to -darkModeEnabled switch (fires Checked → Apply-DarkMode)
+        if( $darkModeEnabled )
+        {
+            $WPFchkDarkMode.IsChecked = $true
+        }
+
+        # Re-apply dark mode once the window is fully rendered so WPF's tab lazy-loading
+        # has materialised the ListView visual tree before the style is stamped
+        $mainWindow.Add_ContentRendered({
+            if( $WPFchkDarkMode.IsChecked )
+            {
+                Apply-DarkMode -window $mainWindow
+            }
+        })
+
         $wpfbtnRefresh.Add_Click({
             $_.Handled = $true
             Write-Verbose "Refresh clicked"
@@ -9309,6 +10670,9 @@ else ## if not passed displayNumber or displaymanufacturer , display a GUI with 
         $WPFAzureRestartContextMenu.Add_Click(  { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_Restart' })
         $WPFAzureRunContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_RunOn' })
         $WPFAzureDetailContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_Detail' })
+        $WPFAzureVMCostContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_VMCost' })
+        $WPFAzureCreateSnapshotContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_CreateSnapshot' })
+        $WPFAzureListSnapshotsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_ListSnapshots' })
         $WPFAzureExtensionsApplicationsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_DetailExtensionsApplications' })
         $WPFAzureDetailSessionContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_DetailSession' })
         $WPFAzureMessageSessionContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_MessageSession' })
@@ -9323,6 +10687,7 @@ else ## if not passed displayNumber or displaymanufacturer , display a GUI with 
         $WPFAzureDeleteSessionHostAndVMContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_DeleteSessionHostAndVM' })
         $WPFAzureChangeDiskTypeContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_ChangeDiskType' })
         $WPFAzureEditTagsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_EditTags' })
+        $WPFAzureVMRolesContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_VMRoles' })
         $WPFAzureVMActivityLogsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_VMActivityLogs' })
         $WPFAzureChangeHostPoolSizeContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_ChangeHostPoolSize' })
         $WPFAzureHostPoolDetailContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_HostPoolDetail' })
@@ -9330,8 +10695,37 @@ else ## if not passed displayNumber or displaymanufacturer , display a GUI with 
         $WPFAzureHostPoolLastLogonsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_HostPoolLastLogons' })
         $WPFAzureHostPoolActivityLogsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_HostPoolActivityLogs' })
         $WPFAzureAppGroupsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_AppGroups' })
+        $WPFAzureHostPoolSKUCheckContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_HostPoolSKUCheck' })
+        $WPFAzureDeleteHostPoolContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_DeleteHostPool' })
         $WPFAzureAVDLogsContextMenu.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'Azure_AVDLogs' })
         $WPFAzureNameToClipboard.Add_Click( { Process-Action -GUIobject $WPFlistViewAzureVMs -Operation 'NameToClipboard' })
+
+        $WPFlistViewAzureVMs.Add_PreviewKeyDown({
+            Param(
+                [Parameter(Mandatory)][Object]$sender,
+                [Parameter(Mandatory)][System.Windows.Input.KeyEventArgs]$keyArgs
+            )
+            if( $keyArgs.Key -eq [System.Windows.Input.Key]::C -and
+                [System.Windows.Input.Keyboard]::Modifiers -eq [System.Windows.Input.ModifierKeys]::Control )
+            {
+                [array]$selected = @( $sender.SelectedItems )
+                if( $selected.Count -gt 0 )
+                {
+                    [array]$jsonObjects = @( $selected | ForEach-Object {
+                        $item = $_
+                        $obj  = [ordered]@{}
+                        foreach( $prop in $item.PSObject.Properties )
+                        {
+                            $obj[ $prop.Name ] = $prop.Value
+                        }
+                        $obj
+                    })
+                    [string]$json = if( $jsonObjects.Count -eq 1 ) { $jsonObjects[0] | ConvertTo-Json -Depth 5 } else { $jsonObjects | ConvertTo-Json -Depth 5 }
+                    [System.Windows.Clipboard]::SetText( $json )
+                    $keyArgs.Handled = $true
+                }
+            }
+        })
 
         $WPFlistViewAzureVMs.Add_PreviewMouseLeftButtonDown({
             Param
@@ -9671,202 +11065,3 @@ else ## if not passed displayNumber or displaymanufacturer , display a GUI with 
 }
 
 New-RemoteSession -rethrow
-
-# SIG # Begin signature block
-# MIIkkgYJKoZIhvcNAQcCoIIkgzCCJH8CAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
-# gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUg1AZMBr3mQiKAaJ3G8z7x0bw
-# IK6ggh9gMIIFfTCCA2WgAwIBAgIQAdazdTZfIM2RHdcv5fmTZDANBgkqhkiG9w0B
-# AQsFADBaMQswCQYDVQQGEwJMVjEZMBcGA1UEChMQRW5WZXJzIEdyb3VwIFNJQTEw
-# MC4GA1UEAxMnR29HZXRTU0wgRzQgQ1MgUlNBNDA5NiBTSEEyNTYgMjAyMiBDQS0x
-# MB4XDTI1MDcyMTAwMDAwMFoXDTI2MDcyMDIzNTk1OVowcTELMAkGA1UEBhMCR0Ix
-# EjAQBgNVBAcTCVdha2VmaWVsZDEmMCQGA1UEChMdU2VjdXJlIFBsYXRmb3JtIFNv
-# bHV0aW9ucyBMdGQxJjAkBgNVBAMTHVNlY3VyZSBQbGF0Zm9ybSBTb2x1dGlvbnMg
-# THRkMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAERFbrIQcZmiw2ScrP4eHxhzHvoBGn
-# AnE3GpY3vjU5CpVG6JLtPgXTQz8aLW7IdGhx7x4cJ3a6y+3/6Q+OX+VVFSiuRd60
-# GO22Y2eoMcBmvwc7hWbEYTtdjEzAu82sMmkAo4IB1DCCAdAwHwYDVR0jBBgwFoAU
-# yfwQ71DIy2t/vQhE7zpik+1bXpowHQYDVR0OBBYEFPu1ucNQfJlsl2iXm5HJzCZH
-# EgfnMD4GA1UdIAQ3MDUwMwYGZ4EMAQQBMCkwJwYIKwYBBQUHAgEWG2h0dHA6Ly93
-# d3cuZGlnaWNlcnQuY29tL0NQUzAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYI
-# KwYBBQUHAwMwgZcGA1UdHwSBjzCBjDBEoEKgQIY+aHR0cDovL2NybDMuZGlnaWNl
-# cnQuY29tL0dvR2V0U1NMRzRDU1JTQTQwOTZTSEEyNTYyMDIyQ0EtMS5jcmwwRKBC
-# oECGPmh0dHA6Ly9jcmw0LmRpZ2ljZXJ0LmNvbS9Hb0dldFNTTEc0Q1NSU0E0MDk2
-# U0hBMjU2MjAyMkNBLTEuY3JsMIGDBggrBgEFBQcBAQR3MHUwJAYIKwYBBQUHMAGG
-# GGh0dHA6Ly9vY3NwLmRpZ2ljZXJ0LmNvbTBNBggrBgEFBQcwAoZBaHR0cDovL2Nh
-# Y2VydHMuZGlnaWNlcnQuY29tL0dvR2V0U1NMRzRDU1JTQTQwOTZTSEEyNTYyMDIy
-# Q0EtMS5jcnQwCQYDVR0TBAIwADANBgkqhkiG9w0BAQsFAAOCAgEACx2bHTrjHk/3
-# tX7HUH4SM/9sEtfVFpRtZcV4nmDpjwI7tAwOSGYXk4DLVjJFJveoFjbYsZ8vquZ1
-# /HJM7rg+O3rCNmzOBvUXFVSjdL3S2R7+kF2ROR7dqk1/BNW6n3o7Q3BmNGqjo1WH
-# jov6PfAbEffCLZI1jT98RNqChMesWMmQS+nf8xwdskne4XZOFX5h/a00X7QLAJ+S
-# /bOptiC0SvEEa5FCWPUcV7ML0MtoDc3HIPnmMMuYLy586eJHbE5XlfEsmWUNk3Kf
-# hxzxsXpAdTSDOeb5Qm/aHGMOY+56Gnt/zxfrv2bfxPnKKZtXPjA47tm89RHpal8b
-# lbCAkVfYpKSe0BFPi8FIk+zXvpoAZkNyCMm/HUMEdMbtRP7CqFmYz0YWuiS3uuUW
-# qAZ1zl+n1kIJT8eOu6o01EKS8ShijHUI0vixibiNvwTFgRyX3Yc/9xkfV1Wgzli4
-# ZPgoZI6FwYBdrhRF0or+CzYIoENUfUYqI7pBM5kkXuSytFD3SXIeSPx14NZSRTzk
-# cdOSJWtLkjLrIrIKzzb5eXxLn/gxmJdssB7GUKZHik+cB0OUCRKHEysBj34hnvXa
-# zuQ6DKLOQFy+cZ6z4f2kAeFyq7bWUxctPmF61FkmGvb9q6e3AMLg7JnfYC6EM31u
-# 42oGx38b5i0NAiUzvWOAbCWTC+G44pgwggWNMIIEdaADAgECAhAOmxiO+dAt5+/b
-# UOIIQBhaMA0GCSqGSIb3DQEBDAUAMGUxCzAJBgNVBAYTAlVTMRUwEwYDVQQKEwxE
-# aWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5jb20xJDAiBgNVBAMT
-# G0RpZ2lDZXJ0IEFzc3VyZWQgSUQgUm9vdCBDQTAeFw0yMjA4MDEwMDAwMDBaFw0z
-# MTExMDkyMzU5NTlaMGIxCzAJBgNVBAYTAlVTMRUwEwYDVQQKEwxEaWdpQ2VydCBJ
-# bmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5jb20xITAfBgNVBAMTGERpZ2lDZXJ0
-# IFRydXN0ZWQgUm9vdCBHNDCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIB
-# AL/mkHNo3rvkXUo8MCIwaTPswqclLskhPfKK2FnC4SmnPVirdprNrnsbhA3EMB/z
-# G6Q4FutWxpdtHauyefLKEdLkX9YFPFIPUh/GnhWlfr6fqVcWWVVyr2iTcMKyunWZ
-# anMylNEQRBAu34LzB4TmdDttceItDBvuINXJIB1jKS3O7F5OyJP4IWGbNOsFxl7s
-# Wxq868nPzaw0QF+xembud8hIqGZXV59UWI4MK7dPpzDZVu7Ke13jrclPXuU15zHL
-# 2pNe3I6PgNq2kZhAkHnDeMe2scS1ahg4AxCN2NQ3pC4FfYj1gj4QkXCrVYJBMtfb
-# BHMqbpEBfCFM1LyuGwN1XXhm2ToxRJozQL8I11pJpMLmqaBn3aQnvKFPObURWBf3
-# JFxGj2T3wWmIdph2PVldQnaHiZdpekjw4KISG2aadMreSx7nDmOu5tTvkpI6nj3c
-# AORFJYm2mkQZK37AlLTSYW3rM9nF30sEAMx9HJXDj/chsrIRt7t/8tWMcCxBYKqx
-# YxhElRp2Yn72gLD76GSmM9GJB+G9t+ZDpBi4pncB4Q+UDCEdslQpJYls5Q5SUUd0
-# viastkF13nqsX40/ybzTQRESW+UQUOsxxcpyFiIJ33xMdT9j7CFfxCBRa2+xq4aL
-# T8LWRV+dIPyhHsXAj6KxfgommfXkaS+YHS312amyHeUbAgMBAAGjggE6MIIBNjAP
-# BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTs1+OC0nFdZEzfLmc/57qYrhwPTzAf
-# BgNVHSMEGDAWgBRF66Kv9JLLgjEtUYunpyGd823IDzAOBgNVHQ8BAf8EBAMCAYYw
-# eQYIKwYBBQUHAQEEbTBrMCQGCCsGAQUFBzABhhhodHRwOi8vb2NzcC5kaWdpY2Vy
-# dC5jb20wQwYIKwYBBQUHMAKGN2h0dHA6Ly9jYWNlcnRzLmRpZ2ljZXJ0LmNvbS9E
-# aWdpQ2VydEFzc3VyZWRJRFJvb3RDQS5jcnQwRQYDVR0fBD4wPDA6oDigNoY0aHR0
-# cDovL2NybDMuZGlnaWNlcnQuY29tL0RpZ2lDZXJ0QXNzdXJlZElEUm9vdENBLmNy
-# bDARBgNVHSAECjAIMAYGBFUdIAAwDQYJKoZIhvcNAQEMBQADggEBAHCgv0NcVec4
-# X6CjdBs9thbX979XB72arKGHLOyFXqkauyL4hxppVCLtpIh3bb0aFPQTSnovLbc4
-# 7/T/gLn4offyct4kvFIDyE7QKt76LVbP+fT3rDB6mouyXtTP0UNEm0Mh65ZyoUi0
-# mcudT6cGAxN3J0TU53/oWajwvy8LpunyNDzs9wPHh6jSTEAZNUZqaVSwuKFWjuyk
-# 1T3osdz9HNj0d1pcVIxv76FQPfx2CWiEn2/K2yCNNWAcAgPLILCsWKAOQGPFmCLB
-# sln1VWvPJ6tsds5vIy30fnFqI2si/xK4VC0nftg62fC2h5b9W9FcrBjDTZ9ztwGp
-# n1eqXijiuZQwggahMIIEiaADAgECAhAHhD2tAcEVwnTuQacoIkZ5MA0GCSqGSIb3
-# DQEBCwUAMGIxCzAJBgNVBAYTAlVTMRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAX
-# BgNVBAsTEHd3dy5kaWdpY2VydC5jb20xITAfBgNVBAMTGERpZ2lDZXJ0IFRydXN0
-# ZWQgUm9vdCBHNDAeFw0yMjA2MjMwMDAwMDBaFw0zMjA2MjIyMzU5NTlaMFoxCzAJ
-# BgNVBAYTAkxWMRkwFwYDVQQKExBFblZlcnMgR3JvdXAgU0lBMTAwLgYDVQQDEydH
-# b0dldFNTTCBHNCBDUyBSU0E0MDk2IFNIQTI1NiAyMDIyIENBLTEwggIiMA0GCSqG
-# SIb3DQEBAQUAA4ICDwAwggIKAoICAQCtHvQHskNmiqJndyWVCqX4FtYp5FfJLO9S
-# h0BuwXuvBeNYt21xf8h/pLJ/7YzeKcNq9z4zEhecqtD0xhbvSB8ksBAfWBMZO0NL
-# fOT0j7WyNuD7rv+ZFza+mxIQ79s1dCiwUMwGonaoDK7mqZfDpKEExR6UyKBh3aat
-# T73U2Imx/x+fYTmQFq+N8FrLs6Fh6YEGWJTgsxyw1fAChCfgtEcZkdtcgK7quqsk
-# HtW6PJ9l5VNJ7T3WXpznsOOxrz3qx0CzWjwK8+3Kv2X6piWvd8YRfAOycSrT4/PM
-# 0cHLFc5xs/4m/ek4FCnYSem43doFftBxZBQkHKoPW3Bt6VIrhVIwvO7hrUjhchJJ
-# ZYdSld3bANDviJ5/ToP7ENv97U9MtKFvmC5dzd1p4HxFR0p5wWmYQbW+y3RFm0np
-# 6H9m57MUMNp0ysmdJjb0f7+dVLX3OEBUb6H+r1LRLZT/xEOTuwOxGg2S4w25KGL9
-# SCBUW4nkBljPHeJToU+THt0P8ZQf4B9IFlGxtLK0g3uOAnwSFgKtmNjhkTl8caLA
-# QwbgEINCqrhc0b6k2Z8+QwgVAL0nIuzM9ckKP8xtIcWg85L3/l0cTkHQde+jKGDG
-# 2CdxBHtflLIUtwqD7JA2uCxWlIzRNgwT0kH2en0+QV8KziSGaqO2r06kwboq2/xy
-# 4e98CEfSYwIDAQABo4IBWTCCAVUwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4E
-# FgQUyfwQ71DIy2t/vQhE7zpik+1bXpowHwYDVR0jBBgwFoAU7NfjgtJxXWRM3y5n
-# P+e6mK4cD08wDgYDVR0PAQH/BAQDAgGGMBMGA1UdJQQMMAoGCCsGAQUFBwMDMHcG
-# CCsGAQUFBwEBBGswaTAkBggrBgEFBQcwAYYYaHR0cDovL29jc3AuZGlnaWNlcnQu
-# Y29tMEEGCCsGAQUFBzAChjVodHRwOi8vY2FjZXJ0cy5kaWdpY2VydC5jb20vRGln
-# aUNlcnRUcnVzdGVkUm9vdEc0LmNydDBDBgNVHR8EPDA6MDigNqA0hjJodHRwOi8v
-# Y3JsMy5kaWdpY2VydC5jb20vRGlnaUNlcnRUcnVzdGVkUm9vdEc0LmNybDAcBgNV
-# HSAEFTATMAcGBWeBDAEDMAgGBmeBDAEEATANBgkqhkiG9w0BAQsFAAOCAgEAC9sK
-# 17IdmKTCUatEs7+yewhJnJ4tyrLwNEnfl6HrG8Pm7HZ0b+5Jc+GGqJT8kRc7mihu
-# VrdsYNHdicueDL9imhtCusI/rUmjwhtflp+XgLkmgLGrmsEho1b+lGiRp7LC/10d
-# i8SAOilDkHj5Zx142xRvBrrWj9eOdSGHwYubAsEd6CDojwcaVz9pfXMzYO3kc0O6
-# PXg1TkcgkYlCUAuDHuk/sZx68W0FVj1P2iMh+VUq9lL1puroAydoeWVUh/+cMXeq
-# fgpBqlAW+r8ma5F6yKL0stVQH8vYb1ES0mJSIPyIfkIjC1V0pbZS3p0QWsKaafEo
-# r8fLfLNfSxntVI/ugut0+6ekluPWRpEXH+JAiNdRjbLbZchCREe3/Xl0YlwkA+eQ
-# VJfM0A7XiuFtY/mOpK2AN+E25t5mQYFhpdxZX5LTDKWgDnb+A6QnEt4iNyukcLaJ
-# uS8IPgPz0E2ALZLt3Rqs+lXifK/GwnNIWQNbf7FmLDB9ph8i8dvsR1hsjc2KPEW4
-# bAsbvLcz8hN1zE1/QbOV92vDGoFjwZOi2koQ+UyEh0e8jDFHAKJeTI+p8EPE/mqv
-# ojLFAnt31yXIA2tjt0ERtsjkhBNmZY6SEOfnIoOwvyqavLPya1Ut3/2cOFLuNQ8Q
-# l6HaZsNQErnnzn+ZEAaUTkPZaeVyoHIkODECLzkwgga0MIIEnKADAgECAhANx6xX
-# Bf8hmS5AQyIMOkmGMA0GCSqGSIb3DQEBCwUAMGIxCzAJBgNVBAYTAlVTMRUwEwYD
-# VQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5jb20xITAf
-# BgNVBAMTGERpZ2lDZXJ0IFRydXN0ZWQgUm9vdCBHNDAeFw0yNTA1MDcwMDAwMDBa
-# Fw0zODAxMTQyMzU5NTlaMGkxCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5EaWdpQ2Vy
-# dCwgSW5jLjFBMD8GA1UEAxM4RGlnaUNlcnQgVHJ1c3RlZCBHNCBUaW1lU3RhbXBp
-# bmcgUlNBNDA5NiBTSEEyNTYgMjAyNSBDQTEwggIiMA0GCSqGSIb3DQEBAQUAA4IC
-# DwAwggIKAoICAQC0eDHTCphBcr48RsAcrHXbo0ZodLRRF51NrY0NlLWZloMsVO1D
-# ahGPNRcybEKq+RuwOnPhof6pvF4uGjwjqNjfEvUi6wuim5bap+0lgloM2zX4kftn
-# 5B1IpYzTqpyFQ/4Bt0mAxAHeHYNnQxqXmRinvuNgxVBdJkf77S2uPoCj7GH8BLux
-# BG5AvftBdsOECS1UkxBvMgEdgkFiDNYiOTx4OtiFcMSkqTtF2hfQz3zQSku2Ws3I
-# fDReb6e3mmdglTcaarps0wjUjsZvkgFkriK9tUKJm/s80FiocSk1VYLZlDwFt+cV
-# FBURJg6zMUjZa/zbCclF83bRVFLeGkuAhHiGPMvSGmhgaTzVyhYn4p0+8y9oHRaQ
-# T/aofEnS5xLrfxnGpTXiUOeSLsJygoLPp66bkDX1ZlAeSpQl92QOMeRxykvq6gby
-# lsXQskBBBnGy3tW/AMOMCZIVNSaz7BX8VtYGqLt9MmeOreGPRdtBx3yGOP+rx3rK
-# WDEJlIqLXvJWnY0v5ydPpOjL6s36czwzsucuoKs7Yk/ehb//Wx+5kMqIMRvUBDx6
-# z1ev+7psNOdgJMoiwOrUG2ZdSoQbU2rMkpLiQ6bGRinZbI4OLu9BMIFm1UUl9Vne
-# Ps6BaaeEWvjJSjNm2qA+sdFUeEY0qVjPKOWug/G6X5uAiynM7Bu2ayBjUwIDAQAB
-# o4IBXTCCAVkwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQU729TSunkBnx6
-# yuKQVvYv1Ensy04wHwYDVR0jBBgwFoAU7NfjgtJxXWRM3y5nP+e6mK4cD08wDgYD
-# VR0PAQH/BAQDAgGGMBMGA1UdJQQMMAoGCCsGAQUFBwMIMHcGCCsGAQUFBwEBBGsw
-# aTAkBggrBgEFBQcwAYYYaHR0cDovL29jc3AuZGlnaWNlcnQuY29tMEEGCCsGAQUF
-# BzAChjVodHRwOi8vY2FjZXJ0cy5kaWdpY2VydC5jb20vRGlnaUNlcnRUcnVzdGVk
-# Um9vdEc0LmNydDBDBgNVHR8EPDA6MDigNqA0hjJodHRwOi8vY3JsMy5kaWdpY2Vy
-# dC5jb20vRGlnaUNlcnRUcnVzdGVkUm9vdEc0LmNybDAgBgNVHSAEGTAXMAgGBmeB
-# DAEEAjALBglghkgBhv1sBwEwDQYJKoZIhvcNAQELBQADggIBABfO+xaAHP4HPRF2
-# cTC9vgvItTSmf83Qh8WIGjB/T8ObXAZz8OjuhUxjaaFdleMM0lBryPTQM2qEJPe3
-# 6zwbSI/mS83afsl3YTj+IQhQE7jU/kXjjytJgnn0hvrV6hqWGd3rLAUt6vJy9lMD
-# PjTLxLgXf9r5nWMQwr8Myb9rEVKChHyfpzee5kH0F8HABBgr0UdqirZ7bowe9Vj2
-# AIMD8liyrukZ2iA/wdG2th9y1IsA0QF8dTXqvcnTmpfeQh35k5zOCPmSNq1UH410
-# ANVko43+Cdmu4y81hjajV/gxdEkMx1NKU4uHQcKfZxAvBAKqMVuqte69M9J6A47O
-# vgRaPs+2ykgcGV00TYr2Lr3ty9qIijanrUR3anzEwlvzZiiyfTPjLbnFRsjsYg39
-# OlV8cipDoq7+qNNjqFzeGxcytL5TTLL4ZaoBdqbhOhZ3ZRDUphPvSRmMThi0vw9v
-# ODRzW6AxnJll38F0cuJG7uEBYTptMSbhdhGQDpOXgpIUsWTjd6xpR6oaQf/DJbg3
-# s6KCLPAlZ66RzIg9sC+NJpud/v4+7RWsWCiKi9EOLLHfMR2ZyJ/+xhCx9yHbxtl5
-# TPau1j/1MIDpMPx0LckTetiSuEtQvLsNz3Qbp7wGWqbIiOWCnb5WqxL3/BAPvIXK
-# UjPSxyZsq8WhbaM2tszWkPZPubdcMIIG7TCCBNWgAwIBAgIQCoDvGEuN8QWC0cR2
-# p5V0aDANBgkqhkiG9w0BAQsFADBpMQswCQYDVQQGEwJVUzEXMBUGA1UEChMORGln
-# aUNlcnQsIEluYy4xQTA/BgNVBAMTOERpZ2lDZXJ0IFRydXN0ZWQgRzQgVGltZVN0
-# YW1waW5nIFJTQTQwOTYgU0hBMjU2IDIwMjUgQ0ExMB4XDTI1MDYwNDAwMDAwMFoX
-# DTM2MDkwMzIzNTk1OVowYzELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDkRpZ2lDZXJ0
-# LCBJbmMuMTswOQYDVQQDEzJEaWdpQ2VydCBTSEEyNTYgUlNBNDA5NiBUaW1lc3Rh
-# bXAgUmVzcG9uZGVyIDIwMjUgMTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoC
-# ggIBANBGrC0Sxp7Q6q5gVrMrV7pvUf+GcAoB38o3zBlCMGMyqJnfFNZx+wvA69HF
-# TBdwbHwBSOeLpvPnZ8ZN+vo8dE2/pPvOx/Vj8TchTySA2R4QKpVD7dvNZh6wW2R6
-# kSu9RJt/4QhguSssp3qome7MrxVyfQO9sMx6ZAWjFDYOzDi8SOhPUWlLnh00Cll8
-# pjrUcCV3K3E0zz09ldQ//nBZZREr4h/GI6Dxb2UoyrN0ijtUDVHRXdmncOOMA3Co
-# B/iUSROUINDT98oksouTMYFOnHoRh6+86Ltc5zjPKHW5KqCvpSduSwhwUmotuQhc
-# g9tw2YD3w6ySSSu+3qU8DD+nigNJFmt6LAHvH3KSuNLoZLc1Hf2JNMVL4Q1Opbyb
-# pMe46YceNA0LfNsnqcnpJeItK/DhKbPxTTuGoX7wJNdoRORVbPR1VVnDuSeHVZlc
-# 4seAO+6d2sC26/PQPdP51ho1zBp+xUIZkpSFA8vWdoUoHLWnqWU3dCCyFG1roSrg
-# HjSHlq8xymLnjCbSLZ49kPmk8iyyizNDIXj//cOgrY7rlRyTlaCCfw7aSUROwnu7
-# zER6EaJ+AliL7ojTdS5PWPsWeupWs7NpChUk555K096V1hE0yZIXe+giAwW00aHz
-# rDchIc2bQhpp0IoKRR7YufAkprxMiXAJQ1XCmnCfgPf8+3mnAgMBAAGjggGVMIIB
-# kTAMBgNVHRMBAf8EAjAAMB0GA1UdDgQWBBTkO/zyMe39/dfzkXFjGVBDz2GM6DAf
-# BgNVHSMEGDAWgBTvb1NK6eQGfHrK4pBW9i/USezLTjAOBgNVHQ8BAf8EBAMCB4Aw
-# FgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwgZUGCCsGAQUFBwEBBIGIMIGFMCQGCCsG
-# AQUFBzABhhhodHRwOi8vb2NzcC5kaWdpY2VydC5jb20wXQYIKwYBBQUHMAKGUWh0
-# dHA6Ly9jYWNlcnRzLmRpZ2ljZXJ0LmNvbS9EaWdpQ2VydFRydXN0ZWRHNFRpbWVT
-# dGFtcGluZ1JTQTQwOTZTSEEyNTYyMDI1Q0ExLmNydDBfBgNVHR8EWDBWMFSgUqBQ
-# hk5odHRwOi8vY3JsMy5kaWdpY2VydC5jb20vRGlnaUNlcnRUcnVzdGVkRzRUaW1l
-# U3RhbXBpbmdSU0E0MDk2U0hBMjU2MjAyNUNBMS5jcmwwIAYDVR0gBBkwFzAIBgZn
-# gQwBBAIwCwYJYIZIAYb9bAcBMA0GCSqGSIb3DQEBCwUAA4ICAQBlKq3xHCcEua5g
-# QezRCESeY0ByIfjk9iJP2zWLpQq1b4URGnwWBdEZD9gBq9fNaNmFj6Eh8/YmRDfx
-# T7C0k8FUFqNh+tshgb4O6Lgjg8K8elC4+oWCqnU/ML9lFfim8/9yJmZSe2F8AQ/U
-# dKFOtj7YMTmqPO9mzskgiC3QYIUP2S3HQvHG1FDu+WUqW4daIqToXFE/JQ/EABgf
-# ZXLWU0ziTN6R3ygQBHMUBaB5bdrPbF6MRYs03h4obEMnxYOX8VBRKe1uNnzQVTeL
-# ni2nHkX/QqvXnNb+YkDFkxUGtMTaiLR9wjxUxu2hECZpqyU1d0IbX6Wq8/gVutDo
-# jBIFeRlqAcuEVT0cKsb+zJNEsuEB7O7/cuvTQasnM9AWcIQfVjnzrvwiCZ85EE8L
-# UkqRhoS3Y50OHgaY7T/lwd6UArb+BOVAkg2oOvol/DJgddJ35XTxfUlQ+8Hggt8l
-# 2Yv7roancJIFcbojBcxlRcGG0LIhp6GvReQGgMgYxQbV1S3CrWqZzBt1R9xJgKf4
-# 7CdxVRd/ndUlQ05oxYy2zRWVFjF7mcr4C34Mj3ocCVccAvlKV9jEnstrniLvUxxV
-# ZE/rptb7IRE2lskKPIJgbaP5t2nGj/ULLi49xTcBZU8atufk+EMF/cWuiC7POGT7
-# 5qaL6vdCvHlshtjdNXOCIUjsarfNZzGCBJwwggSYAgEBMG4wWjELMAkGA1UEBhMC
-# TFYxGTAXBgNVBAoTEEVuVmVycyBHcm91cCBTSUExMDAuBgNVBAMTJ0dvR2V0U1NM
-# IEc0IENTIFJTQTQwOTYgU0hBMjU2IDIwMjIgQ0EtMQIQAdazdTZfIM2RHdcv5fmT
-# ZDAJBgUrDgMCGgUAoHgwGAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG
-# 9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIB
-# FTAjBgkqhkiG9w0BCQQxFgQUT+OJay9vl/FtHhj+aBu3n33BZSgwCwYHKoZIzj0C
-# AQUABGcwZQIxAJrtUKuIrwkost087/AzOw90spPz6b5ZgTa/J5PwKv3yvo09pCWM
-# fvDCUQ+R2NAr1AIwMr7zhK17KhdSW48ANowdyFsyJdt3clGFSDE7+9iZNl/R9hUa
-# P6Yxm7Lj9IG+5noUoYIDJjCCAyIGCSqGSIb3DQEJBjGCAxMwggMPAgEBMH0waTEL
-# MAkGA1UEBhMCVVMxFzAVBgNVBAoTDkRpZ2lDZXJ0LCBJbmMuMUEwPwYDVQQDEzhE
-# aWdpQ2VydCBUcnVzdGVkIEc0IFRpbWVTdGFtcGluZyBSU0E0MDk2IFNIQTI1NiAy
-# MDI1IENBMQIQCoDvGEuN8QWC0cR2p5V0aDANBglghkgBZQMEAgEFAKBpMBgGCSqG
-# SIb3DQEJAzELBgkqhkiG9w0BBwEwHAYJKoZIhvcNAQkFMQ8XDTI2MDcyMDExMzY0
-# MFowLwYJKoZIhvcNAQkEMSIEIKGkesYCDEfi+rGQTi8etSMkJ19mSl15ScX5TbO8
-# XBk8MA0GCSqGSIb3DQEBAQUABIICALRGZjfZ/3zf8FjUzYM4KudI63GTiXbeAz9m
-# Dn1owSFZFtJZn5IagK904ggT6RjBvtpdQkAbbg+5skMgb+KbBLimCKsbZJgTKTBx
-# CFKub5VdpHoP1mRTRnacMzDVPJPLdlrfxfNIduKPlb+S1ySjVirgHgN2ol0ZF+ZR
-# Hl1kq/fLebmtEcBifpNKhXnsEoj/DVJpvQSalzk58cjhUgOX9ZB8L17KDnZwaZA3
-# WWuk/5HSb4WxyhoBoTG2tVAjkn+1T8gO+EcFJ8iG6PrMJ1ePly8mCXkDtz6PY3A4
-# 91Zj0irICCu3fkOyFdkfudgOy4HxV2vbN+lha3oihQouiwSaocTXGVB1TQZH+PeK
-# Pg/5LTKGmW81IiEyjYyfzNGp8qkmEXbg0iqkQdUKTEctjIH5Kk+tJWPqDsFkYcII
-# KXkW2V/R3j5FWzdCRlB8YZrmBiw67VoPEJhZuypwaCWjogMjoDoOpds41BoJQwa7
-# T4lcBkqejvdqc0aAYmZ/kPsQAN/YeWAJnTNNWUpR1/Up0aVoAfVH3B8D7nIvGWDc
-# QqljcuDxg4OZfDtwjjRv1wIyyBLOqG8WY7QmgJfzKN7oRO30pgqR7uHeA2drA6Mb
-# 7gyEVJq9Fnf/70ewauc8P50dmlPWKRUPUkQ12Vhm/5ks47Fw4pYtUu9vUcH0yx7Q
-# hub2YVx7
-# SIG # End signature block
